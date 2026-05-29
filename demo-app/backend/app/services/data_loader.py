@@ -315,3 +315,59 @@ def get_skill_md(skill: str, round_n: int) -> tuple[int, str]:
 
     path = _skill_dir(skill) / f"SKILL_round_{chosen}.md"
     return chosen, _read_skill_md(skill, chosen, path.stat().st_mtime)
+
+
+def get_test_cases(skill: str) -> list[dict]:
+    """Return UI-safe test case metadata for one skill."""
+    _skill_dir(skill)  # validates known skill and stable directory
+    raw = _get_test_cases(skill)
+    out: list[dict] = []
+    for tc_id in sorted(raw.keys()):
+        tc = raw[tc_id]
+        fixture_files: list[str] = []
+        if tc.get("fixture_file"):
+            fixture_files.append(str(tc["fixture_file"]))
+        if tc.get("fixture_files"):
+            fixture_files.extend(str(f) for f in tc["fixture_files"])
+        out.append(
+            {
+                "id": tc_id,
+                "workflow": tc.get("workflow") or _workflow_from_id(tc_id),
+                "name": tc.get("name", tc_id),
+                "prompt": tc.get("prompt", ""),
+                "expected_behavior": tc.get("expected_behavior", ""),
+                "fixture_files": fixture_files,
+            }
+        )
+    return out
+
+
+def get_test_case(skill: str, test_case_id: str) -> dict:
+    """Return one test case metadata object or 404."""
+    for tc in get_test_cases(skill):
+        if tc["id"] == test_case_id:
+            return tc
+    raise HTTPException(
+        status_code=404, detail=f"test case not found: {skill}/{test_case_id}"
+    )
+
+
+def get_eval_entry(skill: str, round_n: int, test_case_id: str) -> dict:
+    """Return the best matching frontend-shaped eval row for one test case."""
+    matches = [
+        e
+        for e in get_eval_detail(skill, round_n)
+        if e.get("test_case_id") == test_case_id
+    ]
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail=f"eval entry not found: {skill} round {round_n} {test_case_id}",
+        )
+    return max(matches, key=lambda e: float(e.get("hybrid_score", 0.0)))
+
+
+def get_api_calls_for_test_case(skill: str, test_case_id: str) -> list[dict]:
+    """Return raw api_calls rows related to one test case."""
+    rows = get_api_calls(skill)
+    return [r for r in rows if r.get("test_case") == test_case_id]
