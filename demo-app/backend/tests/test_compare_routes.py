@@ -266,3 +266,16 @@ def test_parse_judge_json_falls_back_to_tie_for_bad_json() -> None:
     assert parsed["score_original"] == 0.0
     assert parsed["score_peak"] == 0.0
     assert "not json" in parsed["rationale"]
+
+
+def test_backend_loads_repo_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # config.py must call load_dotenv on the repo-root .env at import time.
+    import importlib
+
+    import app.config as config_mod
+
+    importlib.reload(config_mod)
+    # The repo .env carries OPENROUTER_API_KEY; after import it must be visible.
+    import os
+
+    assert os.getenv("OPENROUTER_API_KEY"), "config import should load repo-root .env"
