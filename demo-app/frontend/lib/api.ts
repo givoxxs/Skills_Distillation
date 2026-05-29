@@ -1,7 +1,7 @@
 /* Server-side fetch helpers for the FastAPI backend. Used inside Server
  * Components (async page.tsx) so the result is rendered on the server. */
 
-import type { SkillSummary } from "./types";
+import type { CompareCase, SkillSummary } from "./types";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
@@ -81,3 +81,49 @@ export function fetchEvalDetail(skill: string, round?: number): Promise<EvalDeta
 }
 
 export { BACKEND_URL };
+
+export type CompareRunResponse = { run_id: string };
+
+export function fetchCompareCases(skill: string): Promise<CompareCase[]> {
+  return get<CompareCase[]>(`/api/compare/${encodeURIComponent(skill)}/cases`);
+}
+
+export async function createCompareReplayRun(
+  skill: string,
+  testCaseId: string
+): Promise<CompareRunResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/compare/replay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ skill, test_case_id: testCaseId }),
+  });
+  if (!res.ok) throw new Error(`compare replay → ${res.status} ${res.statusText}`);
+  return (await res.json()) as CompareRunResponse;
+}
+
+export async function createCompareLiveRun(body: {
+  skill: string;
+  prompt_mode: "test_case" | "custom";
+  test_case_id?: string;
+  custom_prompt?: string;
+  fixture_file?: string;
+}): Promise<CompareRunResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/compare/live`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`compare live → ${res.status} ${detail}`);
+  }
+  return (await res.json()) as CompareRunResponse;
+}
+
+export function compareReplayStreamUrl(runId: string): string {
+  return `${BACKEND_URL}/api/compare/replay/${encodeURIComponent(runId)}/stream`;
+}
+
+export function compareLiveStreamUrl(runId: string): string {
+  return `${BACKEND_URL}/api/compare/live/${encodeURIComponent(runId)}/stream`;
+}

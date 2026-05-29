@@ -51,3 +51,48 @@ export type Kpis = {
   best_peak: { skill: string; score: number; round: number };
   total_cost: number;
 };
+
+export type CompareWinner = "original" | "peak" | "tie";
+export type ComparePhase = "idle" | "queued" | "run_original" | "run_peak" | "judge" | "done" | "error";
+
+export type CompareCase = {
+  id: string;
+  workflow: string;
+  name: string;
+  prompt: string;
+  expected_behavior: string;
+  fixture_files: string[];
+};
+
+export type CompareSideResult = {
+  label: string;
+  round: number;
+  skill_md_round: number;
+  hybrid_score?: number;
+  rule_score?: number;
+  llm_judge_score?: number | null;
+  rule_checks?: { name: string; passed: boolean; score?: number | null; reason: string }[];
+  judge_rationale?: string;
+  output?: string;
+};
+
+export type CompareResult = {
+  skill?: string;
+  test_case_id?: string;
+  winner: CompareWinner;
+  best_round?: number;
+  original?: CompareSideResult;
+  peak?: CompareSideResult;
+  score_original?: number;
+  score_peak?: number;
+  rationale?: string;
+  judge_model?: string;
+  student_model?: string;
+  elapsed_s?: number;
+  original_output_files?: string[];
+  peak_output_files?: string[];
+};
+
+export type CompareLogEntry =
+  | { kind: "log"; side: string; tag: string; line: string }
+  | { kind: "jsonl"; source: string; side: string; record: unknown };
