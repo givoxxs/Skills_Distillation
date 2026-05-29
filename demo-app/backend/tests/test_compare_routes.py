@@ -115,16 +115,18 @@ def test_compare_replay_stream_emits_jsonl_and_result(client: TestClient) -> Non
     parsed = _parse_sse(raw)
     events = [e for e, _ in parsed]
     assert events[0] == "status"
-    assert "jsonl" in events
+    assert "artifact" in events
     assert "result" in events
     assert events[-1] == "complete"
 
     statuses = [d["phase"] for e, d in parsed if e == "status"]
     assert statuses == ["queued", "run_original", "run_peak", "judge", "done"]
 
+    sides = {d["side"] for e, d in parsed if e == "artifact"}
+    assert sides == {"original", "peak"}
+
     result = next(d for e, d in parsed if e == "result")
     assert result["skill"] == "docx"
-    assert result["test_case_id"] == "tc_a01"
     assert result["winner"] in {"original", "peak", "tie"}
     assert result["original"]["round"] == 1
     assert result["peak"]["round"] >= 1

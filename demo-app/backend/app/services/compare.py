@@ -244,12 +244,90 @@ def _replay_result(run: CompareRun) -> dict:
     }
 
 
+def _replay_artifacts(
+    skill: str, side: str, round_n: int, batch: int, test_case_id: str
+) -> list[dict]:
+    """Build artifact events for one replay side from stable files."""
+    try:
+        art_dir = data_loader.get_artifact_dir(skill, round_n, batch, test_case_id)
+    except HTTPException:
+        return []
+    out: list[dict] = []
+    base = (
+        f"/api/compare/{skill}/artifact?round={round_n}&batch={batch}&tc={test_case_id}"
+    )
+    docx = next(
+        (p for p in sorted(art_dir.glob("*.docx")) if "fixture" not in p.name.lower()),
+        None,
+    )
+    if docx is not None:
+        out.append(
+            {
+                "side": side,
+                "kind": "pdf",
+                "label": docx.name,
+                "url": f"{base}&file=document.pdf",
+                "round": round_n,
+                "batch": batch,
+                "test_case_id": test_case_id,
+            }
+        )
+        out.append(
+            {
+                "side": side,
+                "kind": "docx",
+                "label": docx.name,
+                "url": f"{base}&file={docx.name}",
+                "round": round_n,
+                "batch": batch,
+                "test_case_id": test_case_id,
+            }
+        )
+    else:
+        text_file = next(
+            (
+                p
+                for p in art_dir.iterdir()
+                if p.suffix.lower() in {".txt", ".json", ".md"}
+                and p.name != "agent_final.md"
+            ),
+            None,
+        )
+        if text_file is not None:
+            out.append(
+                {
+                    "side": side,
+                    "kind": "text",
+                    "label": text_file.name,
+                    "text": text_file.read_text(encoding="utf-8", errors="replace")[
+                        :8000
+                    ],
+                    "round": round_n,
+                    "batch": batch,
+                    "test_case_id": test_case_id,
+                }
+            )
+    final = art_dir / "agent_final.md"
+    if final.is_file():
+        out.append(
+            {
+                "side": side,
+                "kind": "text",
+                "label": "agent_final.md",
+                "text": final.read_text(encoding="utf-8", errors="replace")[:8000],
+                "round": round_n,
+                "batch": batch,
+                "test_case_id": test_case_id,
+            }
+        )
+    return out
+
+
 async def stream_replay(run_id: str) -> AsyncIterator[str]:
     run = _get_run(run_id, "replay")
     try:
         result = _replay_result(run)
         assert run.test_case_id is not None
-        api_calls = data_loader.get_api_calls_for_test_case(run.skill, run.test_case_id)
         original_eval = data_loader.get_eval_entry(run.skill, 1, run.test_case_id)
         peak_eval = data_loader.get_eval_entry(
             run.skill, int(result["best_round"]), run.test_case_id
@@ -261,49 +339,35 @@ async def stream_replay(run_id: str) -> AsyncIterator[str]:
             {
                 "side": "system",
                 "tag": "system",
-                "line": f"loaded compare replay for {run.skill}/{run.test_case_id}",
+                "line": f"loaded replay {run.skill}/{run.test_case_id}",
             },
         )
 
         yield _event("status", {"phase": "run_original"})
-        yield _event(
-            "jsonl",
-            {"source": "eval_detail", "side": "original", "record": original_eval},
-        )
-        yield _event(
-            "log",
-            {
-                "side": "original",
-                "tag": "student",
-                "line": f"round 1 output_dir={original_eval.get('output', '')}",
-            },
-        )
+        for art in _replay_artifacts(
+            run.skill, "original", 1, int(original_eval["batch"]), run.test_case_id
+        ):
+            yield _event("artifact", art)
 
         yield _event("status", {"phase": "run_peak"})
-        yield _event(
-            "jsonl",
-            {"source": "eval_detail", "side": "peak", "record": peak_eval},
-        )
-        yield _event(
-            "log",
-            {
-                "side": "peak",
-                "tag": "student",
-                "line": f"round {result['best_round']} output_dir={peak_eval.get('output', '')}",
-            },
-        )
+        for art in _replay_artifacts(
+            run.skill,
+            "peak",
+            int(result["best_round"]),
+            int(peak_eval["batch"]),
+            run.test_case_id,
+        ):
+            yield _event("artifact", art)
 
         yield _event("status", {"phase": "judge"})
-        for row in api_calls:
-            yield _event(
-                "jsonl", {"source": "api_calls", "side": "judge", "record": row}
-            )
         yield _event(
             "log",
             {
                 "side": "judge",
                 "tag": "judge",
-                "line": f"winner={result['winner']} original={result['original']['hybrid_score']} peak={result['peak']['hybrid_score']}",
+                "line": f"winner={result['winner']} "
+                f"original={result['original']['hybrid_score']} "
+                f"peak={result['peak']['hybrid_score']}",
             },
         )
         yield _event("result", result)
