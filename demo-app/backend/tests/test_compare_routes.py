@@ -47,3 +47,24 @@ def test_data_loader_get_eval_entry_missing_case_raises_404() -> None:
     with pytest.raises(Exception) as exc:
         data_loader.get_eval_entry("docx", round_n=1, test_case_id="tc_missing")
     assert getattr(exc.value, "status_code", None) == 404
+
+
+def test_compare_cases_rejects_unknown_skill(client: TestClient) -> None:
+    r = client.get("/api/compare/not-a-skill/cases")
+    assert r.status_code == 404
+
+
+def test_compare_replay_rejects_unknown_skill(client: TestClient) -> None:
+    r = client.post(
+        "/api/compare/replay",
+        json={"skill": "not-a-skill", "test_case_id": "tc_a01"},
+    )
+    assert r.status_code == 422
+
+
+def test_compare_live_rejects_invalid_prompt_mode(client: TestClient) -> None:
+    r = client.post(
+        "/api/compare/live",
+        json={"skill": "docx", "prompt_mode": "bad-mode", "test_case_id": "tc_a01"},
+    )
+    assert r.status_code == 422

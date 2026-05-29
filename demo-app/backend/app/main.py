@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import HealthResponse
+from app.routes import compare as compare_route
 from app.routes import run as run_route
 from app.routes import skills as skills_route
 
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(skills_route.router)
 app.include_router(run_route.router)
+app.include_router(compare_route.router)
 
 
 @app.get("/api/health", response_model=HealthResponse)
