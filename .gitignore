@@ -101,6 +101,7 @@ ui/.pnpm-store/
 # MCP tool caches (large generated files)
 .token-savior-cache.json
 CLAUDE.md
+CLAUDE.skills.md
 
 _bmad/
 _bmad-output/
@@ -116,3 +117,8 @@ entities.json
 docs/notes/
 docs/thesis/
 docs/setup/
+*.docx
+DATN_Skill_Distillation.html
+
+.devcontainer/
+factory/
