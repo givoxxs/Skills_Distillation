@@ -49,8 +49,7 @@ logs/
 .antigravity/
 .cursor/
 .claude/
-# .github/
-# .claude
+claudekit-engineer/
 
 skill_runner/workspace/*
 skill_runner/skills/*
