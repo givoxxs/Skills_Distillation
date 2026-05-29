@@ -279,3 +279,26 @@ def test_backend_loads_repo_env(monkeypatch: pytest.MonkeyPatch) -> None:
     import os
 
     assert os.getenv("OPENROUTER_API_KEY"), "config import should load repo-root .env"
+
+
+@requires_stable
+def test_eval_entry_carries_batch() -> None:
+    entry = data_loader.get_eval_entry("docx", round_n=1, test_case_id="tc_a01")
+    assert isinstance(entry["batch"], int)
+    assert entry["batch"] >= 1
+
+
+@requires_stable
+def test_get_artifact_dir_resolves_under_stable() -> None:
+    from app.config import STABLE_DIR
+
+    entry = data_loader.get_eval_entry("docx", round_n=1, test_case_id="tc_a01")
+    d = data_loader.get_artifact_dir("docx", 1, entry["batch"], "tc_a01")
+    assert d.is_dir()
+    assert str(d).startswith(str(STABLE_DIR))
+
+
+def test_get_artifact_dir_rejects_traversal() -> None:
+    with pytest.raises(Exception) as exc:
+        data_loader.get_artifact_dir("docx", 1, 1, "../../etc")
+    assert getattr(exc.value, "status_code", None) in (400, 404)

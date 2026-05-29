@@ -269,6 +269,7 @@ def get_eval_detail(skill: str, round_n: int | None = None) -> list[dict]:
         out.append(
             {
                 "round": int(rd),
+                "batch": int(r.get("batch", 1)),
                 "test_case_id": tc_id,
                 "workflow": workflow,
                 "rule_score": round(float(rule_score), 4),
@@ -371,3 +372,29 @@ def get_api_calls_for_test_case(skill: str, test_case_id: str) -> list[dict]:
     """Return raw api_calls rows related to one test case."""
     rows = get_api_calls(skill)
     return [r for r in rows if r.get("test_case") == test_case_id]
+
+
+_TC_SAFE = re.compile(r"^tc_[a-z0-9]+$", re.IGNORECASE)
+
+
+def get_artifact_dir(skill: str, round_n: int, batch: int, test_case_id: str) -> Path:
+    """Return STABLE_DIR/{skill}/round_{round}/batch_{batch}/{tc}/ — validated.
+
+    Rejects path traversal in test_case_id and confirms the dir is under the
+    skill's stable directory.
+    """
+    if not _TC_SAFE.match(test_case_id or ""):
+        raise HTTPException(status_code=400, detail=f"bad test_case_id: {test_case_id}")
+    base = _skill_dir(skill)
+    path = (
+        base / f"round_{int(round_n)}" / f"batch_{int(batch)}" / test_case_id
+    ).resolve()
+    try:
+        path.relative_to(base.resolve())
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, detail="artifact path escapes stable dir"
+        ) from e
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail=f"artifact dir not found: {path}")
+    return path
