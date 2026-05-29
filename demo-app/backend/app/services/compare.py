@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
+import tempfile
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -9,7 +13,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from app.config import TEST_CASES_DIR
+from app.config import DISTILL_REPO_ROOT, TEST_CASES_DIR
 from app.models import CompareLiveRequest
 from app.services import data_loader
 
@@ -230,7 +234,257 @@ async def stream_replay(run_id: str) -> AsyncIterator[str]:
         yield _event("complete", {"run_id": run_id})
 
 
+def _ensure_distillation_imports() -> None:
+    root = DISTILL_REPO_ROOT / "distillation_v2"
+    root_str = str(root)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+
+
+def _materialize_skill_version(skill: str, skill_round: int, parent: Path) -> Path:
+    src = DISTILL_REPO_ROOT / "distillation_v2" / "skills" / skill
+    if not src.is_dir():
+        raise HTTPException(status_code=502, detail=f"skill source missing: {src}")
+    dst = parent / f"{skill}-round-{skill_round}"
+    shutil.copytree(src, dst)
+    _, skill_md = data_loader.get_skill_md(skill, skill_round)
+    (dst / "SKILL.md").write_text(skill_md, encoding="utf-8")
+    return dst
+
+
+def _read_jsonl(path: str | Path | None) -> list[dict]:
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        return []
+    records: list[dict] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            records.append({"event": "raw", "line": line})
+    return records
+
+
+def _run_student_side(
+    *,
+    run_id: str,
+    side: str,
+    skill: str,
+    skill_round: int,
+    prompt: str,
+    fixture_path: Path | None,
+) -> dict:
+    _ensure_distillation_imports()
+    from runner.config import RunConfigV2
+    from stages.student import run_student
+
+    summary = data_loader.get_summary(skill)
+    student_model = summary.get("student_model", "google/gemma-4-26b-a4b-it")
+    work_root = Path(tempfile.mkdtemp(prefix=f"compare-{run_id}-{side}-"))
+    skill_dir = _materialize_skill_version(skill, skill_round, work_root)
+    output_dir = work_root / "outputs"
+    log_dir = work_root / "logs"
+
+    config = RunConfigV2(
+        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        openrouter_base_url="https://openrouter.ai/api",
+        skills_dir=str(work_root),
+        log_dir=str(log_dir),
+        output_dir=str(output_dir),
+        input_files=[fixture_path] if fixture_path else [],
+    )
+    result = run_student(
+        user_prompt=prompt,
+        skill_name=skill,
+        skill_dir=skill_dir,
+        model=student_model,
+        config=config,
+        max_retries=1,
+    )
+    return {
+        "side": side,
+        "skill_round": skill_round,
+        "stop_reason": result.get("stop_reason", "unknown"),
+        "iterations": result.get("iterations", 0),
+        "duration_seconds": result.get("duration_seconds", 0.0),
+        "token_usage": result.get("token_usage", {"prompt": 0, "completion": 0}),
+        "output_files": result.get("output_files", []),
+        "log_file": str(result.get("log_file", "")),
+        "log_records": _read_jsonl(result.get("log_file")),
+    }
+
+
+JUDGE_MODEL = "anthropic/claude-haiku-4-5"
+
+
+def _parse_judge_json(raw: str) -> dict:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {
+            "winner": "tie",
+            "score_original": 0.0,
+            "score_peak": 0.0,
+            "rationale": raw[:1000],
+        }
+    winner = data.get("winner")
+    if winner not in {"original", "peak", "tie"}:
+        winner = "tie"
+    return {
+        "winner": winner,
+        "score_original": max(0.0, min(1.0, float(data.get("score_original", 0.0)))),
+        "score_peak": max(0.0, min(1.0, float(data.get("score_peak", 0.0)))),
+        "rationale": str(data.get("rationale", ""))[:2000],
+    }
+
+
+def _preview_output_files(files: list[str]) -> list[dict]:
+    previews: list[dict] = []
+    for f in files:
+        path = Path(f)
+        item = {"path": str(path), "exists": path.exists(), "size": 0, "preview": ""}
+        if path.exists():
+            item["size"] = path.stat().st_size
+            if path.suffix.lower() in {".txt", ".md", ".json", ".csv"}:
+                item["preview"] = path.read_text(encoding="utf-8", errors="replace")[
+                    :4000
+                ]
+        previews.append(item)
+    return previews
+
+
+def _judge_live(
+    *,
+    skill: str,
+    prompt: str,
+    original: dict,
+    peak: dict,
+    student_model: str,
+) -> dict:
+    _ensure_distillation_imports()
+    from utils.llm_call import OPENROUTER_BASE_URL, call_llm
+
+    system = (
+        "You are judging an Arena comparison between two versions of the same agent skill. "
+        "Return only JSON with keys winner, score_original, score_peak, rationale. "
+        "winner must be original, peak, or tie. Scores must be numbers from 0 to 1."
+    )
+    user = json.dumps(
+        {
+            "skill": skill,
+            "prompt": prompt,
+            "original": {
+                "skill_round": original.get("skill_round"),
+                "stop_reason": original.get("stop_reason"),
+                "output_files": _preview_output_files(original.get("output_files", [])),
+                "token_usage": original.get("token_usage", {}),
+            },
+            "peak": {
+                "skill_round": peak.get("skill_round"),
+                "stop_reason": peak.get("stop_reason"),
+                "output_files": _preview_output_files(peak.get("output_files", [])),
+                "token_usage": peak.get("token_usage", {}),
+            },
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    start = time.time()
+    raw, usage = call_llm(
+        system=system,
+        user=user,
+        model=JUDGE_MODEL,
+        api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        base_url=OPENROUTER_BASE_URL,
+        max_tokens=1200,
+        temperature=0,
+    )
+    parsed = _parse_judge_json(raw)
+    parsed.update(
+        {
+            "judge_model": JUDGE_MODEL,
+            "student_model": student_model,
+            "elapsed_s": round(time.time() - start, 2),
+            "judge_usage": usage,
+            "original_output_files": original.get("output_files", []),
+            "peak_output_files": peak.get("output_files", []),
+        }
+    )
+    return parsed
+
+
 async def stream_live(run_id: str) -> AsyncIterator[str]:
-    _get_run(run_id, "live")
-    yield _event("status", {"phase": "done"})
-    yield _event("complete", {"run_id": run_id})
+    run = _get_run(run_id, "live")
+    req = run.live_request
+    if req is None:
+        yield _event("status", {"phase": "error"})
+        yield _event(
+            "log", {"side": "system", "tag": "error", "line": "live request missing"}
+        )
+        yield _event("complete", {"run_id": run_id})
+        return
+
+    start = time.time()
+    try:
+        prompt, fixture_path = _live_prompt(req)
+        summary = data_loader.get_summary(req.skill)
+        best_round = int(summary["best_round"])
+        student_model = summary.get("student_model", "google/gemma-4-26b-a4b-it")
+
+        yield _event("status", {"phase": "queued"})
+        yield _event(
+            "log", {"side": "system", "tag": "system", "line": "live compare accepted"}
+        )
+
+        yield _event("status", {"phase": "run_original"})
+        original = _run_student_side(
+            run_id=run_id,
+            side="original",
+            skill=req.skill,
+            skill_round=0,
+            prompt=prompt,
+            fixture_path=fixture_path,
+        )
+        for record in original["log_records"]:
+            yield _event(
+                "jsonl", {"source": "runner", "side": "original", "record": record}
+            )
+
+        yield _event("status", {"phase": "run_peak"})
+        peak = _run_student_side(
+            run_id=run_id,
+            side="peak",
+            skill=req.skill,
+            skill_round=best_round,
+            prompt=prompt,
+            fixture_path=fixture_path,
+        )
+        for record in peak["log_records"]:
+            yield _event(
+                "jsonl", {"source": "runner", "side": "peak", "record": record}
+            )
+
+        yield _event("status", {"phase": "judge"})
+        result = _judge_live(
+            skill=req.skill,
+            prompt=prompt,
+            original=original,
+            peak=peak,
+            student_model=student_model,
+        )
+        result["elapsed_s"] = round(time.time() - start, 2)
+        yield _event("result", result)
+        yield _event("status", {"phase": "done"})
+        yield _event("complete", {"run_id": run_id})
+    except Exception as e:  # noqa: BLE001
+        yield _event("status", {"phase": "error"})
+        yield _event(
+            "log",
+            {"side": "system", "tag": "error", "line": f"{type(e).__name__}: {e}"},
+        )
+        yield _event("complete", {"run_id": run_id})
