@@ -79,7 +79,7 @@ def _resolve_fixture_path(skill: str, fixture_file: str | None) -> Path | None:
     return path
 
 
-_SAFE_FILE = re.compile(r"^[A-Za-z0-9._-]+$")
+_SAFE_FILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _safe_file(name: str) -> str:
@@ -114,7 +114,11 @@ def _pdf_cache_dir() -> Path:
 
 
 def _ensure_replay_pdf(skill: str, round_n: int, batch: int, test_case_id: str) -> Path:
-    """Convert the stable .docx for one replay side to PDF, cached OUTSIDE stable."""
+    """Convert the stable .docx for one replay side to PDF, cached OUTSIDE stable.
+
+    Conversion runs in a temp dir so soffice never writes into the read-only
+    STABLE_DIR (it emits the intermediate .pdf next to its input).
+    """
     _ensure_distillation_imports()
     from utils.converter import docx_to_pdf, find_docx
 
@@ -125,10 +129,13 @@ def _ensure_replay_pdf(skill: str, round_n: int, batch: int, test_case_id: str) 
     docx = find_docx(art_dir)
     if docx is None:
         raise HTTPException(status_code=404, detail="no .docx to render for this case")
-    pdf = docx_to_pdf(docx)
-    if pdf is None:
-        raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
-    shutil.copyfile(pdf, cache)
+    with tempfile.TemporaryDirectory(prefix="compare-pdf-") as tmp:
+        tmp_docx = Path(tmp) / docx.name
+        shutil.copy2(docx, tmp_docx)
+        pdf = docx_to_pdf(tmp_docx)
+        if pdf is None:
+            raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
+        shutil.copyfile(pdf, cache)
     return cache
 
 
