@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -25,6 +26,7 @@ class CompareRun:
     skill: str
     test_case_id: str | None = None
     live_request: CompareLiveRequest | None = None
+    output_dirs: dict[str, str] = field(default_factory=dict)
 
 
 _runs: dict[str, CompareRun] = {}
@@ -75,6 +77,88 @@ def _resolve_fixture_path(skill: str, fixture_file: str | None) -> Path | None:
             status_code=404, detail=f"fixture file missing: {fixture_file}"
         )
     return path
+
+
+_SAFE_FILE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+def _safe_file(name: str) -> str:
+    if not name or not _SAFE_FILE.match(name) or ".." in name:
+        raise HTTPException(status_code=400, detail=f"bad file name: {name}")
+    return name
+
+
+def _serve_file(path: Path, *, download: bool = False):
+    from fastapi.responses import FileResponse
+
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"file not found: {path.name}")
+    suffix = path.suffix.lower()
+    media = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }.get(suffix, "application/octet-stream")
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        path,
+        media_type=media,
+        headers={"Content-Disposition": f'{disposition}; filename="{path.name}"'},
+    )
+
+
+def _pdf_cache_dir() -> Path:
+    d = Path(tempfile.gettempdir()) / "compare-pdf-cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _ensure_replay_pdf(skill: str, round_n: int, batch: int, test_case_id: str) -> Path:
+    """Convert the stable .docx for one replay side to PDF, cached OUTSIDE stable."""
+    _ensure_distillation_imports()
+    from utils.converter import docx_to_pdf, find_docx
+
+    cache = _pdf_cache_dir() / f"{skill}_r{round_n}_b{batch}_{test_case_id}.pdf"
+    if cache.is_file():
+        return cache
+    art_dir = data_loader.get_artifact_dir(skill, round_n, batch, test_case_id)
+    docx = find_docx(art_dir)
+    if docx is None:
+        raise HTTPException(status_code=404, detail="no .docx to render for this case")
+    pdf = docx_to_pdf(docx)
+    if pdf is None:
+        raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
+    shutil.copyfile(pdf, cache)
+    return cache
+
+
+def serve_replay_artifact(
+    skill: str, round_n: int, batch: int, test_case_id: str, file: str
+):
+    fname = _safe_file(file)  # blocks "/" and ".." → 400 before any disk access
+    if fname == "document.pdf":
+        return _serve_file(_ensure_replay_pdf(skill, round_n, batch, test_case_id))
+    art_dir = data_loader.get_artifact_dir(skill, round_n, batch, test_case_id)
+    target = (art_dir / fname).resolve()
+    try:
+        target.relative_to(art_dir.resolve())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="path escapes artifact dir") from e
+    return _serve_file(target, download=fname.lower().endswith(".docx"))
+
+
+def serve_live_artifact(run_id: str, side: str, file: str):
+    run = _get_run(run_id, "live")
+    out_dir = run.output_dirs.get(side)
+    if not out_dir:
+        raise HTTPException(status_code=404, detail="no artifacts for that side yet")
+    base = Path(out_dir).resolve()
+    target = (base / _safe_file(file)).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="path escapes output dir") from e
+    return _serve_file(target, download=file.lower().endswith(".docx"))
 
 
 def _live_prompt(req: CompareLiveRequest) -> tuple[str, Path | None]:

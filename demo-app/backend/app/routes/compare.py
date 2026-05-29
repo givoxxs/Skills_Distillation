@@ -14,6 +14,16 @@ def list_compare_cases(skill: str) -> list[dict]:
     return data_loader.get_test_cases(skill)
 
 
+@router.get("/api/compare/artifact")
+def get_live_artifact(run_id: str, side: str, file: str):
+    return compare.serve_live_artifact(run_id, side, file)
+
+
+@router.get("/api/compare/{skill}/artifact")
+def get_replay_artifact(skill: str, round: int, batch: int, tc: str, file: str):
+    return compare.serve_replay_artifact(skill, round, batch, tc, file)
+
+
 @router.post("/api/compare/replay", response_model=CompareRunResponse)
 async def start_replay(req: CompareReplayRequest) -> CompareRunResponse:
     run = compare.create_replay_run(req.skill, req.test_case_id)

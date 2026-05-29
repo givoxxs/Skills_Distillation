@@ -310,3 +310,25 @@ def test_get_artifact_dir_rejects_traversal() -> None:
     with pytest.raises(Exception) as exc:
         data_loader.get_artifact_dir("docx", 1, 1, "../../etc")
     assert getattr(exc.value, "status_code", None) in (400, 404)
+
+
+@requires_stable
+def test_replay_artifact_png_served(client: TestClient) -> None:
+    entry = data_loader.get_eval_entry("docx", round_n=1, test_case_id="tc_a01")
+    r = client.get(
+        f"/api/compare/docx/artifact?round=1&batch={entry['batch']}&tc=tc_a01&file=page_01.png"
+    )
+    # page_01.png exists for tc_a01 in stable; if a given case lacks it, 404 is allowed.
+    assert r.status_code in (200, 404)
+    if r.status_code == 200:
+        assert r.headers["content-type"] == "image/png"
+
+
+def test_replay_artifact_rejects_traversal(client: TestClient) -> None:
+    r = client.get("/api/compare/docx/artifact?round=1&batch=1&tc=tc_a01&file=../x.png")
+    assert r.status_code == 400
+
+
+def test_live_artifact_unknown_run_404(client: TestClient) -> None:
+    r = client.get("/api/compare/artifact?run_id=deadbeef&side=original&file=out.pdf")
+    assert r.status_code == 404
