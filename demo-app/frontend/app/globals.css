@@ -1,2 +1,146 @@
 @import "tailwindcss";
 @import "./design-tokens.css";
+
+.compare-header,
+.compare-controls,
+.compare-live-controls {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.compare-controls,
+.compare-live-controls {
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.compare-controls label,
+.compare-live-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+  font-size: 12px;
+  color: var(--fg-subtle);
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.segmented button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-subtle);
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--primary);
+  color: var(--fg-on-primary);
+}
+
+.textarea {
+  width: min(100%, 720px);
+  min-height: 120px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--fg);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.arena-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.arena-side {
+  min-width: 0;
+}
+
+.compare-log {
+  max-height: 360px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.log-line {
+  display: grid;
+  grid-template-columns: 92px 80px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+}
+
+.log-line code,
+.output-path {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-json {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 8px;
+}
+
+.log-json pre {
+  overflow: auto;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
+.rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rule-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 56px;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.dot-ok {
+  background: var(--success);
+}
+
+.dot-bad {
+  background: var(--danger);
+}
+
+.compare-error {
+  padding: 12px;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+@media (max-width: 900px) {
+  .arena-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .log-line {
+    grid-template-columns: 1fr;
+  }
+}

@@ -50,7 +50,7 @@ export function CompareClient({ summaries, casesBySkill }: Props) {
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const summary = summaries.find((s) => s.skill === skill) || summaries[0];
-  const cases = casesBySkill[skill] || [];
+  const cases = useMemo(() => casesBySkill[skill] || [], [casesBySkill, skill]);
   const activeCase = cases.find((c) => c.id === testCaseId) || cases[0];
   const fixtures = useMemo(() => {
     const seen = new Set<string>();
