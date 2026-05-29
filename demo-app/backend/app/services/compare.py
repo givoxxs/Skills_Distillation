@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from fastapi import HTTPException
 
+from app.config import TEST_CASES_DIR
 from app.models import CompareLiveRequest
 from app.services import data_loader
 
@@ -43,13 +46,56 @@ def create_replay_run(skill: str, test_case_id: str) -> CompareRun:
     return run
 
 
-def create_live_run(req: CompareLiveRequest) -> CompareRun:
-    if req.prompt_mode == "test_case" and not req.test_case_id:
-        raise HTTPException(status_code=422, detail="test_case_id is required")
-    if req.prompt_mode == "custom" and not (req.custom_prompt or "").strip():
+def _known_fixture_files(skill: str) -> set[str]:
+    fixtures: set[str] = set()
+    for tc in data_loader.get_test_cases(skill):
+        fixtures.update(tc["fixture_files"])
+    return fixtures
+
+
+def _resolve_fixture_path(skill: str, fixture_file: str | None) -> Path | None:
+    if not fixture_file:
+        return None
+    known = _known_fixture_files(skill)
+    if fixture_file not in known:
+        raise HTTPException(status_code=404, detail=f"unknown fixture: {fixture_file}")
+    path = TEST_CASES_DIR / fixture_file
+    try:
+        path.relative_to(TEST_CASES_DIR)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, detail="fixture path escapes test_cases"
+        ) from e
+    if not path.exists() or not path.is_file():
+        raise HTTPException(
+            status_code=404, detail=f"fixture file missing: {fixture_file}"
+        )
+    return path
+
+
+def _live_prompt(req: CompareLiveRequest) -> tuple[str, Path | None]:
+    if req.prompt_mode == "test_case":
+        if not req.test_case_id:
+            raise HTTPException(status_code=422, detail="test_case_id is required")
+        tc = data_loader.get_test_case(req.skill, req.test_case_id)
+        fixture = tc["fixture_files"][0] if tc["fixture_files"] else None
+        return tc["prompt"], _resolve_fixture_path(
+            req.skill, req.fixture_file or fixture
+        )
+
+    prompt = (req.custom_prompt or "").strip()
+    if not prompt:
         raise HTTPException(status_code=422, detail="custom_prompt is required")
-    if req.test_case_id:
-        data_loader.get_test_case(req.skill, req.test_case_id)
+    return prompt, _resolve_fixture_path(req.skill, req.fixture_file)
+
+
+def create_live_run(req: CompareLiveRequest) -> CompareRun:
+    if not os.getenv("OPENROUTER_API_KEY"):
+        raise HTTPException(
+            status_code=400,
+            detail="OPENROUTER_API_KEY is required for live compare mode",
+        )
+    _live_prompt(req)
     run = CompareRun(
         run_id=_new_run_id(), kind="live", skill=req.skill, live_request=req
     )

@@ -126,3 +126,43 @@ def test_compare_replay_stream_emits_jsonl_and_result(client: TestClient) -> Non
     assert result["winner"] in {"original", "peak", "tie"}
     assert result["original"]["round"] == 1
     assert result["peak"]["round"] >= 1
+
+
+def test_compare_live_requires_api_key(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    r = client.post(
+        "/api/compare/live",
+        json={"skill": "docx", "prompt_mode": "test_case", "test_case_id": "tc_a01"},
+    )
+    assert r.status_code == 400
+    assert "OPENROUTER_API_KEY" in r.json()["detail"]
+
+
+def test_compare_live_custom_requires_prompt(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    r = client.post(
+        "/api/compare/live",
+        json={"skill": "docx", "prompt_mode": "custom", "custom_prompt": "   "},
+    )
+    assert r.status_code == 422
+
+
+@requires_stable
+def test_compare_live_rejects_unknown_fixture(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    r = client.post(
+        "/api/compare/live",
+        json={
+            "skill": "docx",
+            "prompt_mode": "custom",
+            "custom_prompt": "Read the file.",
+            "fixture_file": "fixtures/does-not-exist.docx",
+        },
+    )
+    assert r.status_code == 404
