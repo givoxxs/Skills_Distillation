@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -268,17 +270,23 @@ def test_parse_judge_json_falls_back_to_tie_for_bad_json() -> None:
     assert "not json" in parsed["rationale"]
 
 
-def test_backend_loads_repo_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # config.py must call load_dotenv on the repo-root .env at import time.
+def test_backend_loads_repo_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import importlib
 
     import app.config as config_mod
 
+    env_file = tmp_path / ".env"
+    env_file.write_text("OPENROUTER_API_KEY=test-sentinel\n")
+    monkeypatch.setenv("DISTILL_REPO_ROOT", str(tmp_path))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     importlib.reload(config_mod)
-    # The repo .env carries OPENROUTER_API_KEY; after import it must be visible.
-    import os
-
-    assert os.getenv("OPENROUTER_API_KEY"), "config import should load repo-root .env"
+    try:
+        assert os.getenv("OPENROUTER_API_KEY") == "test-sentinel"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config_mod)  # restore config to the real repo root
 
 
 @requires_stable

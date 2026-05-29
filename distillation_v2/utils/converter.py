@@ -57,7 +57,7 @@ def docx_to_pdf(docx_path: Path) -> Path | None:
     Returns the PDF path next to the source, or None on any failure.
     """
     if not docx_path.is_file():
-        _log.warning("converter: file not found: %s", docx_path)
+        _log.warning("converter: docx_to_pdf: file not found: %s", docx_path)
         return None
     return _convert_to_pdf_with_retry(docx_path)
 
