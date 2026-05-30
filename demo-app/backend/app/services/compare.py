@@ -109,6 +109,13 @@ def _serve_file(path: Path, *, download: bool = False):
     )
 
 
+# Serialize soffice (LibreOffice) conversions. When the result renders, BOTH
+# arena columns' PDF iframes request document.pdf at once → two concurrent
+# soffice processes race on LibreOffice's shared state and one fails. A single
+# lock makes conversions one-at-a-time (each is ~1s, so latency is fine).
+_SOFFICE_LOCK = threading.Lock()
+
+
 def _pdf_cache_dir() -> Path:
     d = Path(tempfile.gettempdir()) / "compare-pdf-cache"
     d.mkdir(parents=True, exist_ok=True)
@@ -131,13 +138,18 @@ def _ensure_replay_pdf(skill: str, round_n: int, batch: int, test_case_id: str) 
     docx = find_docx(art_dir)
     if docx is None:
         raise HTTPException(status_code=404, detail="no .docx to render for this case")
-    with tempfile.TemporaryDirectory(prefix="compare-pdf-") as tmp:
-        tmp_docx = Path(tmp) / docx.name
-        shutil.copy2(docx, tmp_docx)
-        pdf = docx_to_pdf(tmp_docx)
-        if pdf is None:
-            raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
-        shutil.copyfile(pdf, cache)
+    with _SOFFICE_LOCK:
+        if cache.is_file():  # a concurrent request just produced it
+            return cache
+        with tempfile.TemporaryDirectory(prefix="compare-pdf-") as tmp:
+            tmp_docx = Path(tmp) / docx.name
+            shutil.copy2(docx, tmp_docx)
+            pdf = docx_to_pdf(tmp_docx)
+            if pdf is None:
+                raise HTTPException(
+                    status_code=502, detail="docx→pdf conversion failed"
+                )
+            shutil.copyfile(pdf, cache)
     return cache
 
 
@@ -168,7 +180,10 @@ def _ensure_live_pdf(out_dir: Path) -> Path:
     cached = out_dir / (docx.stem + ".pdf")
     if cached.is_file():
         return cached
-    pdf = docx_to_pdf(docx)
+    with _SOFFICE_LOCK:
+        if cached.is_file():  # a concurrent request just produced it
+            return cached
+        pdf = docx_to_pdf(docx)
     if pdf is None:
         raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
     return pdf
