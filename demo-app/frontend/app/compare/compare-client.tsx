@@ -73,8 +73,11 @@ export function CompareClient({ summaries, casesBySkill }: Props) {
       if (d.phase === "done" || d.phase === "error") {
         setOriginal((p) => ({ ...p, status: d.phase === "error" ? "error" : "done" }));
         setPeak((p) => ({ ...p, status: d.phase === "error" ? "error" : "done" }));
-        es.close();
       }
+    });
+    es.addEventListener("log", (e) => {
+      const d = JSON.parse((e as MessageEvent).data) as { side: string; tag: string; line: string };
+      if (d.tag === "error") setError(d.line);
     });
     es.addEventListener("step", (e) => {
       const d = JSON.parse((e as MessageEvent).data) as CompareStep;

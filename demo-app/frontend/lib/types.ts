@@ -93,10 +93,6 @@ export type CompareResult = {
   peak_output_files?: string[];
 };
 
-export type CompareLogEntry =
-  | { kind: "log"; side: string; tag: string; line: string }
-  | { kind: "jsonl"; source: string; side: string; record: unknown };
-
 export type CompareStep = {
   side: "original" | "peak";
   kind: "start" | "cli_init" | "tool_call" | "tool_result" | "assistant_text" | "end" | "api_error" | string;
