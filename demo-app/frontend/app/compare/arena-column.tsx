@@ -53,6 +53,12 @@ export function ArenaColumn({
 
         {state.artifacts.length > 0 && <ArtifactView artifacts={state.artifacts} />}
 
+        {state.outputDir && (
+          <code className="output-path" title="Saved run folder (logs/ + outputs/)">
+            📁 {state.outputDir}
+          </code>
+        )}
+
         {side?.rule_checks && (
           <div className="rule-list">
             {side.rule_checks.slice(0, 8).map((c) => (

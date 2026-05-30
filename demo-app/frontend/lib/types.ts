@@ -127,4 +127,5 @@ export type CompareSideState = {
   steps: CompareStep[];
   artifacts: CompareArtifact[];
   status: "idle" | "running" | "done" | "error";
+  outputDir?: string;
 };

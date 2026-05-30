@@ -91,8 +91,13 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
       const d = JSON.parse((e as MessageEvent).data) as {
         side: "original" | "peak";
         status: CompareSideState["status"];
+        output_dir?: string;
       };
-      setSide(d.side)((p) => ({ ...p, status: d.status }));
+      setSide(d.side)((p) => ({
+        ...p,
+        status: d.status,
+        ...(d.output_dir ? { outputDir: d.output_dir } : {}),
+      }));
     });
     es.addEventListener("log", (e) => {
       const d = JSON.parse((e as MessageEvent).data) as { side: string; tag: string; line: string };

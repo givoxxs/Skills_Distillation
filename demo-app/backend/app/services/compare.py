@@ -452,6 +452,11 @@ def _norm_step(side: str, ev: dict) -> dict:
     }
 
 
+# Live runs persist here (logs + outputs) so they can be inspected manually:
+#   demo-app/backend/live_runs/<run_id>/<side>/{logs,outputs}/
+_LIVE_RUNS_DIR = Path(__file__).resolve().parents[2] / "live_runs"
+
+
 async def _run_student_side_streaming(
     *,
     run_id: str,
@@ -469,7 +474,8 @@ async def _run_student_side_streaming(
 
     summary = data_loader.get_summary(skill)
     student_model = summary.get("student_model", "google/gemma-4-26b-a4b-it")
-    work_root = Path(tempfile.mkdtemp(prefix=f"compare-{run_id}-{side}-"))
+    work_root = _LIVE_RUNS_DIR / run_id / side
+    work_root.mkdir(parents=True, exist_ok=True)
     skill_dir = _materialize_skill_version(skill, skill_round, work_root)
     output_dir = work_root / "outputs"
     log_dir = work_root / "logs"
@@ -796,7 +802,22 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
                     run.output_dirs[side] = summ["output_dir"]
                     for art in _live_artifacts(run_id, side, summ):
                         yield _event("artifact", art)
-                    yield _event("side_status", {"side": side, "status": "done"})
+                    yield _event(
+                        "log",
+                        {
+                            "side": side,
+                            "tag": "system",
+                            "line": f"saved to {summ['output_dir']}",
+                        },
+                    )
+                    yield _event(
+                        "side_status",
+                        {
+                            "side": side,
+                            "status": "done",
+                            "output_dir": summ["output_dir"],
+                        },
+                    )
                 else:
                     yield _event("step", _norm_step(side, ev))
         finally:

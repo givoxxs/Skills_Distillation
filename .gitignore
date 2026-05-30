@@ -85,6 +85,9 @@ distillation_v2/results/stable/*/validation/
 distillation_v2/results/stable/*/run.log
 distillation_v2/results/stable/*/SKILL_current.md
 
+# Live compare runs (generated student logs + outputs, inspect-only)
+demo-app/backend/live_runs/
+
 distillation_v2/skills/*
 
 skillsbench/
