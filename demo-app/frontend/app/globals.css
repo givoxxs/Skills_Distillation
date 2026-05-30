@@ -144,3 +144,85 @@
     grid-template-columns: 1fr;
   }
 }
+
+.step-timeline {
+  max-height: 420px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.step {
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 8px;
+}
+
+.step-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.step-kind {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.step-it {
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+}
+
+.step-desc {
+  margin-top: 4px;
+}
+
+.step-code {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+}
+
+.step-assistant .step-text {
+  margin-top: 4px;
+  white-space: pre-wrap;
+}
+
+.step-tool { border-left: 3px solid var(--primary); }
+.step-assistant { border-left: 3px solid var(--success); }
+.step-end { border-left: 3px solid var(--fg-subtle); }
+
+.artifact-pdf {
+  width: 100%;
+  height: 480px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.artifact-img {
+  width: 100%;
+  border: 1px solid var(--line);
+}
+
+.artifact-text pre {
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-2);
+  padding: 8px;
+}
+
+.btn-sm {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
