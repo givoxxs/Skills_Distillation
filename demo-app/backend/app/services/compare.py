@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -29,7 +29,6 @@ class CompareRun:
     skill: str
     test_case_id: str | None = None
     live_request: CompareLiveRequest | None = None
-    output_dirs: dict[str, str] = field(default_factory=dict)
 
 
 _runs: dict[str, CompareRun] = {}
@@ -176,11 +175,16 @@ def _ensure_live_pdf(out_dir: Path) -> Path:
 
 
 def serve_live_artifact(run_id: str, side: str, file: str):
-    run = _get_run(run_id, "live")
-    out_dir = run.output_dirs.get(side)
-    if not out_dir:
-        raise HTTPException(status_code=404, detail="no artifacts for that side yet")
-    base = Path(out_dir).resolve()
+    # Resolve from the deterministic on-disk path (live_runs/<run_id>/<side>/outputs)
+    # rather than the in-memory run registry, so artifacts stay viewable even after
+    # the backend reloads/restarts (e.g. uvicorn --reload), which clears _runs.
+    if side not in {"original", "peak"} or not re.fullmatch(
+        r"[0-9A-Za-z]+", run_id or ""
+    ):
+        raise HTTPException(status_code=404, detail="run not found")
+    base = (_LIVE_RUNS_DIR / run_id / side / "outputs").resolve()
+    if not base.is_dir():
+        raise HTTPException(status_code=404, detail="run outputs not found")
     fname = _safe_file(file)
     if fname == "document.pdf":
         return _serve_file(_ensure_live_pdf(base))
@@ -820,7 +824,6 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
                 elif "__result__" in ev:
                     summ = ev["__result__"]
                     side_summaries[side] = summ
-                    run.output_dirs[side] = summ["output_dir"]
                     for art in _live_artifacts(run_id, side, summ):
                         yield _event("artifact", art)
                     yield _event(

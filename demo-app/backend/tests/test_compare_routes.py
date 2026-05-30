@@ -357,6 +357,25 @@ def test_live_artifact_unknown_run_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+def test_live_artifact_serves_from_disk_without_registry(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    # Artifacts must be servable from the deterministic disk path even when the
+    # in-memory run registry is empty (e.g. after a backend reload).
+    from app.services import compare as compare_module
+
+    monkeypatch.setattr(compare_module, "_LIVE_RUNS_DIR", tmp_path)
+    out = tmp_path / "abc123def456" / "original" / "outputs"
+    out.mkdir(parents=True)
+    (out / "output.docx").write_bytes(b"PK\x03\x04 fake docx")
+
+    r = client.get(
+        "/api/compare/artifact?run_id=abc123def456&side=original&file=output.docx"
+    )
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+
+
 def test_build_judge_user_uses_images_when_docx(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
