@@ -157,18 +157,39 @@ def serve_replay_artifact(
     return _serve_file(target, download=fname.lower().endswith(".docx"))
 
 
+def _ensure_live_pdf(out_dir: Path) -> Path:
+    """Render the live side's output .docx → PDF on demand, cached in out_dir
+    (the run's writable temp dir). Regenerates if the cached PDF is missing."""
+    _ensure_distillation_imports()
+    from utils.converter import docx_to_pdf, find_docx
+
+    docx = find_docx(out_dir)
+    if docx is None:
+        raise HTTPException(status_code=404, detail="no .docx to render for this side")
+    cached = out_dir / (docx.stem + ".pdf")
+    if cached.is_file():
+        return cached
+    pdf = docx_to_pdf(docx)
+    if pdf is None:
+        raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
+    return pdf
+
+
 def serve_live_artifact(run_id: str, side: str, file: str):
     run = _get_run(run_id, "live")
     out_dir = run.output_dirs.get(side)
     if not out_dir:
         raise HTTPException(status_code=404, detail="no artifacts for that side yet")
     base = Path(out_dir).resolve()
-    target = (base / _safe_file(file)).resolve()
+    fname = _safe_file(file)
+    if fname == "document.pdf":
+        return _serve_file(_ensure_live_pdf(base))
+    target = (base / fname).resolve()
     try:
         target.relative_to(base)
     except ValueError as e:
         raise HTTPException(status_code=400, detail="path escapes output dir") from e
-    return _serve_file(target, download=file.lower().endswith(".docx"))
+    return _serve_file(target, download=fname.lower().endswith(".docx"))
 
 
 def _live_prompt(req: CompareLiveRequest) -> tuple[str, Path | None]:
@@ -525,25 +546,25 @@ async def _run_student_side_streaming(
 
 
 def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
-    """Convert the live side's output .docx → PDF and build artifact events."""
+    """Build artifact events for the live side. The PDF is rendered on demand by
+    the artifact endpoint (``document.pdf`` sentinel) so the URL never couples to a
+    pre-converted filename — avoiding "file not found" when names differ."""
     _ensure_distillation_imports()
-    from utils.converter import docx_to_pdf, find_docx
+    from utils.converter import find_docx
 
     out_dir = Path(summ["output_dir"])
     base = f"/api/compare/artifact?run_id={run_id}&side={side}"
     out: list[dict] = []
     docx = find_docx(out_dir) if out_dir.is_dir() else None
     if docx is not None:
-        pdf = docx_to_pdf(docx)
-        if pdf is not None:
-            out.append(
-                {
-                    "side": side,
-                    "kind": "pdf",
-                    "label": docx.name,
-                    "url": f"{base}&file={pdf.name}",
-                }
-            )
+        out.append(
+            {
+                "side": side,
+                "kind": "pdf",
+                "label": docx.name,
+                "url": f"{base}&file=document.pdf",
+            }
+        )
         out.append(
             {
                 "side": side,
@@ -729,28 +750,58 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
             "log", {"side": "system", "tag": "system", "line": "live compare accepted"}
         )
 
+        # Run both sides CONCURRENTLY and interleave their events as they arrive,
+        # so the two arena columns fill side-by-side (not original-then-peak).
+        yield _event("status", {"phase": "running"})
+        yield _event("side_status", {"side": "original", "status": "running"})
+        yield _event("side_status", {"side": "peak", "status": "running"})
+
+        queue: asyncio.Queue = asyncio.Queue()
+
+        async def _drain(side: str, skill_round: int) -> None:
+            try:
+                async for ev in _run_student_side_streaming(
+                    run_id=run_id,
+                    side=side,
+                    skill=req.skill,
+                    skill_round=skill_round,
+                    prompt=prompt,
+                    fixture_path=fixture_path,
+                ):
+                    await queue.put((side, ev))
+            except Exception as e:  # noqa: BLE001
+                await queue.put((side, {"__error__": f"{type(e).__name__}: {e}"}))
+            await queue.put((side, None))
+
+        tasks = [
+            asyncio.create_task(_drain("original", 0)),
+            asyncio.create_task(_drain("peak", best_round)),
+        ]
         side_summaries: dict[str, dict] = {}
-        for side, skill_round, phase in [
-            ("original", 0, "run_original"),
-            ("peak", best_round, "run_peak"),
-        ]:
-            yield _event("status", {"phase": phase})
-            async for ev in _run_student_side_streaming(
-                run_id=run_id,
-                side=side,
-                skill=req.skill,
-                skill_round=skill_round,
-                prompt=prompt,
-                fixture_path=fixture_path,
-            ):
-                if "__result__" in ev:
+        try:
+            remaining = len(tasks)
+            while remaining > 0:
+                side, ev = await queue.get()
+                if ev is None:
+                    remaining -= 1
+                    continue
+                if "__error__" in ev:
+                    yield _event(
+                        "log", {"side": side, "tag": "error", "line": ev["__error__"]}
+                    )
+                    yield _event("side_status", {"side": side, "status": "error"})
+                elif "__result__" in ev:
                     summ = ev["__result__"]
                     side_summaries[side] = summ
                     run.output_dirs[side] = summ["output_dir"]
                     for art in _live_artifacts(run_id, side, summ):
                         yield _event("artifact", art)
+                    yield _event("side_status", {"side": side, "status": "done"})
                 else:
                     yield _event("step", _norm_step(side, ev))
+        finally:
+            for t in tasks:
+                t.cancel()
 
         yield _event("status", {"phase": "judge"})
         result = _judge_live(

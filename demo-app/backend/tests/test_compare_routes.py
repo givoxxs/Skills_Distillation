@@ -399,3 +399,15 @@ def test_build_judge_user_text_fallback_when_no_docx(
         peak={"output_files": [], "skill_round": 5, "stop_reason": "success"},
     )
     assert all(b.get("type") == "text" for b in blocks)
+
+
+@requires_stable
+def test_compare_suggestions_sorted_by_delta(client: TestClient) -> None:
+    r = client.get("/api/compare/docx/suggestions?limit=3")
+    assert r.status_code == 200
+    body = r.json()
+    assert 0 < len(body) <= 3
+    assert {"test_case_id", "name", "original", "peak", "delta"} <= set(body[0])
+    deltas = [x["delta"] for x in body]
+    assert deltas == sorted(deltas, reverse=True)
+    assert body[0]["delta"] == round(body[0]["peak"] - body[0]["original"], 3)

@@ -1,7 +1,7 @@
 /* Server-side fetch helpers for the FastAPI backend. Used inside Server
  * Components (async page.tsx) so the result is rendered on the server. */
 
-import type { CompareCase, SkillSummary } from "./types";
+import type { CompareCase, CompareSuggestion, SkillSummary } from "./types";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
@@ -131,4 +131,10 @@ export function compareLiveStreamUrl(runId: string): string {
 export function compareArtifactUrl(path: string): string {
   // Backend emits root-relative artifact URLs (e.g. "/api/compare/...").
   return path.startsWith("http") ? path : `${BACKEND_URL}${path}`;
+}
+
+export function fetchCompareSuggestions(skill: string, limit = 5): Promise<CompareSuggestion[]> {
+  return get<CompareSuggestion[]>(
+    `/api/compare/${encodeURIComponent(skill)}/suggestions?limit=${limit}`
+  );
 }

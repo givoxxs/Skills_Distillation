@@ -14,6 +14,11 @@ def list_compare_cases(skill: str) -> list[dict]:
     return data_loader.get_test_cases(skill)
 
 
+@router.get("/api/compare/{skill}/suggestions")
+def list_compare_suggestions(skill: str, limit: int = 5) -> list[dict]:
+    return data_loader.get_compare_suggestions(skill, limit)
+
+
 @router.get("/api/compare/artifact")
 def get_live_artifact(run_id: str, side: str, file: str):
     return compare.serve_live_artifact(run_id, side, file)

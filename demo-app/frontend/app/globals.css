@@ -228,3 +228,48 @@
   padding: 0 10px;
   font-size: 12px;
 }
+
+.suggest-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.suggest-label {
+  font-size: 12px;
+  color: var(--fg-subtle);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--primary);
+}
+
+.chip.active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--fg-on-primary);
+}
+
+.chip-delta {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.chip.active .chip-delta {
+  color: var(--fg-on-primary);
+}

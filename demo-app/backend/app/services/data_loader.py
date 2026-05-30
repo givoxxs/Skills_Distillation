@@ -398,3 +398,31 @@ def get_artifact_dir(skill: str, round_n: int, batch: int, test_case_id: str) ->
     if not path.is_dir():
         raise HTTPException(status_code=404, detail=f"artifact dir not found: {path}")
     return path
+
+
+def get_compare_suggestions(skill: str, limit: int = 5) -> list[dict]:
+    """Test cases with the largest hybrid_score improvement from round 1 (≈R0
+    baseline) to the best round — the clearest original-vs-peak demos."""
+    _skill_dir(skill)
+    best = int(get_summary(skill).get("best_round", 1))
+    r1 = {e["test_case_id"]: e for e in get_eval_detail(skill, 1)}
+    rb = {e["test_case_id"]: e for e in get_eval_detail(skill, best)}
+    tcs = _get_test_cases(skill)
+    rows: list[dict] = []
+    for tc_id, orig in r1.items():
+        peak = rb.get(tc_id)
+        if peak is None:
+            continue
+        o = float(orig["hybrid_score"])
+        p = float(peak["hybrid_score"])
+        rows.append(
+            {
+                "test_case_id": tc_id,
+                "name": tcs.get(tc_id, {}).get("name", tc_id),
+                "original": round(o, 3),
+                "peak": round(p, 3),
+                "delta": round(p - o, 3),
+            }
+        )
+    rows.sort(key=lambda r: r["delta"], reverse=True)
+    return rows[: max(1, limit)]

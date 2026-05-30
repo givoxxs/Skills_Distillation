@@ -17,15 +17,20 @@ import type {
   CompareResult,
   CompareSideState,
   CompareStep,
+  CompareSuggestion,
 } from "@/lib/types";
 import { ArenaColumn } from "./arena-column";
 import { JudgeVerdict } from "./judge-verdict";
 
-type Props = { summaries: RealSummary[]; casesBySkill: Record<string, CompareCase[]> };
+type Props = {
+  summaries: RealSummary[];
+  casesBySkill: Record<string, CompareCase[]>;
+  suggestionsBySkill: Record<string, CompareSuggestion[]>;
+};
 const SKILLS = ["docx", "internal-comms", "slack-gif-creator"] as const;
 const EMPTY_SIDE: CompareSideState = { steps: [], artifacts: [], status: "idle" };
 
-export function CompareClient({ summaries, casesBySkill }: Props) {
+export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: Props) {
   const [skill, setSkill] = useState("docx");
   const [mode, setMode] = useState<"replay" | "live">("replay");
   const [promptMode, setPromptMode] = useState<"test_case" | "custom">("test_case");
@@ -41,6 +46,7 @@ export function CompareClient({ summaries, casesBySkill }: Props) {
 
   const summary = summaries.find((s) => s.skill === skill) || summaries[0];
   const cases = useMemo(() => casesBySkill[skill] || [], [casesBySkill, skill]);
+  const suggestions = suggestionsBySkill[skill] || [];
   const activeCase = cases.find((c) => c.id === testCaseId) || cases[0];
   const fixtures = useMemo(() => {
     const seen = new Set<string>();
@@ -70,10 +76,23 @@ export function CompareClient({ summaries, casesBySkill }: Props) {
         setOriginal((p) => (p.status === "running" ? { ...p, status: "done" } : p));
         setPeak((p) => ({ ...p, status: "running" }));
       }
-      if (d.phase === "done" || d.phase === "error") {
-        setOriginal((p) => ({ ...p, status: d.phase === "error" ? "error" : "done" }));
-        setPeak((p) => ({ ...p, status: d.phase === "error" ? "error" : "done" }));
+      // Only flip a side that is still "running" → keeps a per-side "error"
+      // (from a side_status event) from being clobbered to "done".
+      if (d.phase === "done") {
+        setOriginal((p) => (p.status === "running" ? { ...p, status: "done" } : p));
+        setPeak((p) => (p.status === "running" ? { ...p, status: "done" } : p));
       }
+      if (d.phase === "error") {
+        setOriginal((p) => (p.status === "running" ? { ...p, status: "error" } : p));
+        setPeak((p) => (p.status === "running" ? { ...p, status: "error" } : p));
+      }
+    });
+    es.addEventListener("side_status", (e) => {
+      const d = JSON.parse((e as MessageEvent).data) as {
+        side: "original" | "peak";
+        status: CompareSideState["status"];
+      };
+      setSide(d.side)((p) => ({ ...p, status: d.status }));
     });
     es.addEventListener("log", (e) => {
       const d = JSON.parse((e as MessageEvent).data) as { side: string; tag: string; line: string };
@@ -155,6 +174,29 @@ export function CompareClient({ summaries, casesBySkill }: Props) {
           <Icon name="play" size={16} />{mode === "replay" ? "Replay comparison" : "Run live arena"}
         </button>
       </section>
+
+      {suggestions.length > 0 && (
+        <section className="suggest-row">
+          <span className="suggest-label">
+            <Bi vi="💡 Cải thiện rõ nhất:" en="💡 Biggest improvements:" />
+          </span>
+          {suggestions.map((s) => (
+            <button
+              key={s.test_case_id}
+              type="button"
+              className={"chip" + (activeCase?.id === s.test_case_id ? " active" : "")}
+              title={`${s.name} · R0 ${s.original.toFixed(2)} → peak ${s.peak.toFixed(2)}`}
+              onClick={() => {
+                setPromptMode("test_case");
+                setTestCaseId(s.test_case_id);
+                resetRun();
+              }}
+            >
+              {s.test_case_id} <span className="chip-delta">Δ+{s.delta.toFixed(2)}</span>
+            </button>
+          ))}
+        </section>
+      )}
 
       {mode === "live" && (
         <section className="compare-live-controls">

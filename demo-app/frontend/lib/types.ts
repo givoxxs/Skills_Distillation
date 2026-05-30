@@ -53,7 +53,15 @@ export type Kpis = {
 };
 
 export type CompareWinner = "original" | "peak" | "tie";
-export type ComparePhase = "idle" | "queued" | "run_original" | "run_peak" | "judge" | "done" | "error";
+export type ComparePhase = "idle" | "queued" | "running" | "run_original" | "run_peak" | "judge" | "done" | "error";
+
+export type CompareSuggestion = {
+  test_case_id: string;
+  name: string;
+  original: number;
+  peak: number;
+  delta: number;
+};
 
 export type CompareCase = {
   id: string;
