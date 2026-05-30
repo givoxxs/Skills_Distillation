@@ -453,8 +453,11 @@ def _norm_step(side: str, ev: dict) -> dict:
 
 
 # Live runs persist here (logs + outputs) so they can be inspected manually:
-#   demo-app/backend/live_runs/<run_id>/<side>/{logs,outputs}/
-_LIVE_RUNS_DIR = Path(__file__).resolve().parents[2] / "live_runs"
+#   demo-app/live_runs/<run_id>/<side>/{logs,outputs}/
+# MUST live OUTSIDE demo-app/backend/ — uvicorn --reload watches that dir, and
+# materialising a skill copies its scripts/*.py here, which would otherwise
+# trigger a reload mid-run and wipe the in-memory run registry (run_id not found).
+_LIVE_RUNS_DIR = Path(__file__).resolve().parents[3] / "live_runs"
 
 
 async def _run_student_side_streaming(
@@ -606,9 +609,27 @@ JUDGE_MODEL = "anthropic/claude-haiku-4-5"
 
 
 def _parse_judge_json(raw: str) -> dict:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    def _coerce(s: str) -> dict | None:
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            return None
+        return obj if isinstance(obj, dict) else None
+
+    # Models often wrap the JSON in ```json ... ``` fences or surrounding prose.
+    data = _coerce(raw)
+    if data is None:
+        text = raw.strip()
+        if text.startswith("```"):
+            inner = text[3:]
+            if inner[:4].lower() == "json":
+                inner = inner[4:]
+            data = _coerce(inner.rsplit("```", 1)[0].strip())
+    if data is None:
+        start, end = raw.find("{"), raw.rfind("}")
+        if 0 <= start < end:
+            data = _coerce(raw[start : end + 1])
+    if data is None:
         return {
             "winner": "tie",
             "score_original": 0.0,

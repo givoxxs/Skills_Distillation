@@ -401,6 +401,31 @@ def test_build_judge_user_text_fallback_when_no_docx(
     assert all(b.get("type") == "text" for b in blocks)
 
 
+def test_parse_judge_json_strips_markdown_fences() -> None:
+    from app.services.compare import _parse_judge_json
+
+    raw = (
+        "```json\n"
+        '{"winner":"original","score_original":0.85,"score_peak":0.65,'
+        '"rationale":"Original is more complete."}\n'
+        "```"
+    )
+    parsed = _parse_judge_json(raw)
+    assert parsed["winner"] == "original"
+    assert parsed["score_original"] == 0.85
+    assert parsed["score_peak"] == 0.65
+    assert parsed["rationale"] == "Original is more complete."
+
+
+def test_parse_judge_json_extracts_object_from_prose() -> None:
+    from app.services.compare import _parse_judge_json
+
+    raw = 'Here is my verdict: {"winner":"peak","score_original":0.2,"score_peak":0.9,"rationale":"ok"} Done.'
+    parsed = _parse_judge_json(raw)
+    assert parsed["winner"] == "peak"
+    assert parsed["score_peak"] == 0.9
+
+
 @requires_stable
 def test_compare_suggestions_sorted_by_delta(client: TestClient) -> None:
     r = client.get("/api/compare/docx/suggestions?limit=3")

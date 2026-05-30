@@ -85,8 +85,10 @@ distillation_v2/results/stable/*/validation/
 distillation_v2/results/stable/*/run.log
 distillation_v2/results/stable/*/SKILL_current.md
 
-# Live compare runs (generated student logs + outputs, inspect-only)
-demo-app/backend/live_runs/
+# Live compare runs (generated student logs + outputs, inspect-only).
+# Kept OUTSIDE demo-app/backend/ so uvicorn --reload doesn't restart mid-run.
+# Broad pattern covers demo-app/live_runs/ and any stale backend/live_runs/.
+live_runs/
 
 distillation_v2/skills/*
 
