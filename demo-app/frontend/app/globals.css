@@ -199,6 +199,8 @@
 .step-tool { border-left: 3px solid var(--primary); }
 .step-assistant { border-left: 3px solid var(--success); }
 .step-end { border-left: 3px solid var(--fg-subtle); }
+.step-result { border-left: 3px solid var(--fg-subtle); }
+.step-meta { opacity: 0.7; }
 
 .artifact-pdf {
   width: 100%;
