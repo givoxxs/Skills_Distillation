@@ -127,3 +127,8 @@ export function compareReplayStreamUrl(runId: string): string {
 export function compareLiveStreamUrl(runId: string): string {
   return `${BACKEND_URL}/api/compare/live/${encodeURIComponent(runId)}/stream`;
 }
+
+export function compareArtifactUrl(path: string): string {
+  // Backend emits root-relative artifact URLs (e.g. "/api/compare/...").
+  return path.startsWith("http") ? path : `${BACKEND_URL}${path}`;
+}

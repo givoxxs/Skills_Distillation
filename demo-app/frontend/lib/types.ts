@@ -96,3 +96,31 @@ export type CompareResult = {
 export type CompareLogEntry =
   | { kind: "log"; side: string; tag: string; line: string }
   | { kind: "jsonl"; source: string; side: string; record: unknown };
+
+export type CompareStep = {
+  side: "original" | "peak";
+  kind: "start" | "cli_init" | "tool_call" | "tool_result" | "assistant_text" | "end" | "api_error" | string;
+  iteration?: number | null;
+  tool?: string | null;
+  args?: { command?: string; description?: string; [k: string]: unknown } | null;
+  result?: string | null;
+  text?: string | null;
+  stop_reason?: string | null;
+  duration_seconds?: number | null;
+  tokens?: { prompt?: number; completion?: number; total?: number } | null;
+  ts?: string | null;
+};
+
+export type CompareArtifact = {
+  side: "original" | "peak";
+  kind: "pdf" | "docx" | "text" | "png";
+  label: string;
+  url?: string;
+  text?: string;
+};
+
+export type CompareSideState = {
+  steps: CompareStep[];
+  artifacts: CompareArtifact[];
+  status: "idle" | "running" | "done" | "error";
+};
