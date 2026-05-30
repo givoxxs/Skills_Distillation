@@ -463,6 +463,11 @@ def _norm_step(side: str, ev: dict) -> dict:
 # trigger a reload mid-run and wipe the in-memory run registry (run_id not found).
 _LIVE_RUNS_DIR = Path(__file__).resolve().parents[3] / "live_runs"
 
+# Cached compare rubrics (one teacher-generated rubric per skill+workflow). Kept
+# outside backend/ for the same reason as live_runs. First live run per
+# (skill, workflow) generates it; later runs hit the cache.
+_RUBRIC_CACHE_DIR = Path(__file__).resolve().parents[3] / ".rubric_cache"
+
 
 async def _run_student_side_streaming(
     *,
@@ -720,9 +725,11 @@ def _build_judge_content(
     return blocks
 
 
-def _judge_live(
+def _judge_live_headtohead(
     *, skill: str, prompt: str, original: dict, peak: dict, student_model: str
 ) -> dict:
+    """Quick single-call head-to-head judge (used for custom prompts that have
+    no rubric, and as a fallback if rubric scoring fails)."""
     _ensure_distillation_imports()
     from utils.llm_call import OPENROUTER_BASE_URL, call_llm
 
@@ -756,6 +763,158 @@ def _judge_live(
         }
     )
     return parsed
+
+
+def _rubric_side_payload(
+    label: str, round_n: int, skill_md_round: int, er, output_dir: str
+) -> dict:
+    """Build a replay-shaped side payload from a pipeline EvalResult so the
+    frontend ArenaColumn renders per-rubric checks identically to replay."""
+    checks = [
+        {
+            "name": c.name,
+            "passed": bool(c.passed),
+            "score": round(float(c.score), 3),
+            "reason": c.reason,
+        }
+        for c in er.checks
+    ]
+    rule = sum(float(c.score) for c in er.checks) / len(er.checks) if er.checks else 0.0
+    judge = (
+        float(er.llm_judge_score)
+        if er.llm_judge_score is not None and er.llm_judge_score >= 0
+        else None
+    )
+    hybrid = rule if judge is None else 0.8 * rule + 0.2 * judge
+    return {
+        "label": label,
+        "round": round_n,
+        "skill_md_round": skill_md_round,
+        "hybrid_score": round(hybrid, 4),
+        "rule_score": round(rule, 4),
+        "llm_judge_score": None if judge is None else round(judge, 4),
+        "rule_checks": checks,
+        "judge_rationale": er.llm_judge_reasoning,
+        "output": output_dir,
+    }
+
+
+def _load_compare_rubric(
+    skill: str, best_round: int, workflow: str, wf_tcs: list[dict]
+) -> dict:
+    """Load/generate the shared rubric for one skill+workflow (cached). Uses the
+    peak SKILL.md so both sides are judged by the same task-focused rubric."""
+    _ensure_distillation_imports()
+    from stages.rubric_gen import generate_rubric
+    from utils.llm_call import OPENROUTER_BASE_URL
+
+    with tempfile.TemporaryDirectory(prefix="compare-rubric-") as tmp:
+        skill_dir = _materialize_skill_version(skill, best_round, Path(tmp))
+        return generate_rubric(
+            skill_name=skill,
+            skill_dir=skill_dir,
+            test_cases=wf_tcs,
+            workflow=workflow,
+            cache_dir=str(_RUBRIC_CACHE_DIR),
+            model=JUDGE_MODEL,
+            anthropic_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+            base_url=OPENROUTER_BASE_URL,
+        )
+
+
+def _judge_live_rubric(
+    *,
+    req: CompareLiveRequest,
+    best_round: int,
+    student_model: str,
+    side_summaries: dict,
+) -> dict:
+    """Score each side independently with the pipeline rubric Judge → per-side
+    checks (like replay). Raises on any failure so the caller can fall back."""
+    _ensure_distillation_imports()
+    from stages.judge import Judge
+    from utils.llm_call import OPENROUTER_BASE_URL
+
+    raw_cases = data_loader._get_test_cases(req.skill)
+    tc = raw_cases.get(req.test_case_id or "")
+    if not tc:
+        raise RuntimeError(f"test case not found: {req.test_case_id}")
+    workflow = tc.get("workflow") or "create"
+    wf_tcs = [
+        t for t in raw_cases.values() if (t.get("workflow") or "create") == workflow
+    ]
+    rubric = _load_compare_rubric(req.skill, best_round, workflow, wf_tcs)
+
+    judge = Judge(
+        rubric=rubric,
+        model=JUDGE_MODEL,
+        ensemble_n=1,
+        anthropic_api_key=os.getenv("OPENROUTER_API_KEY", ""),
+        base_url=OPENROUTER_BASE_URL,
+    )
+    tc_with_skill = {**tc, "skill": req.skill}
+    fixture = _live_prompt(req)[1] if workflow == "read" else None
+    input_files = [fixture] if fixture else None
+
+    start = time.time()
+    sides: dict[str, dict] = {}
+    for side, skill_round in [("original", 0), ("peak", best_round)]:
+        out_dir = side_summaries.get(side, {}).get("output_dir", "")
+        er = judge.score(
+            output_dir=out_dir,
+            test_case=tc_with_skill,
+            model=student_model,
+            round_n=skill_round,
+            input_files=input_files,
+        )
+        label = "Original Skill" if side == "original" else "Peak Skill"
+        sides[side] = _rubric_side_payload(label, skill_round, skill_round, er, out_dir)
+
+    o, p = sides["original"], sides["peak"]
+    return {
+        "skill": req.skill,
+        "test_case_id": req.test_case_id,
+        "best_round": best_round,
+        "winner": _winner(float(o["hybrid_score"]), float(p["hybrid_score"])),
+        "original": o,
+        "peak": p,
+        "judge_model": JUDGE_MODEL,
+        "student_model": student_model,
+        "elapsed_s": round(time.time() - start, 2),
+        "original_output_files": side_summaries.get("original", {}).get(
+            "output_files", []
+        ),
+        "peak_output_files": side_summaries.get("peak", {}).get("output_files", []),
+    }
+
+
+def _judge_live(
+    *,
+    req: CompareLiveRequest,
+    prompt: str,
+    side_summaries: dict,
+    best_round: int,
+    student_model: str,
+) -> dict:
+    # Existing test cases → rubric per-side scoring (per-criterion checks like
+    # replay). Custom prompts (no rubric) or any failure → quick head-to-head.
+    if req.prompt_mode == "test_case" and req.test_case_id:
+        try:
+            return _judge_live_rubric(
+                req=req,
+                best_round=best_round,
+                student_model=student_model,
+                side_summaries=side_summaries,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return _judge_live_headtohead(
+        skill=req.skill,
+        prompt=prompt,
+        original=side_summaries.get("original", {}),
+        peak=side_summaries.get("peak", {}),
+        student_model=student_model,
+    )
 
 
 async def stream_live(run_id: str) -> AsyncIterator[str]:
@@ -850,10 +1009,10 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
 
         yield _event("status", {"phase": "judge"})
         result = _judge_live(
-            skill=req.skill,
+            req=req,
             prompt=prompt,
-            original=side_summaries.get("original", {}),
-            peak=side_summaries.get("peak", {}),
+            side_summaries=side_summaries,
+            best_round=best_round,
             student_model=student_model,
         )
         result["elapsed_s"] = round(time.time() - start, 2)

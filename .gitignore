@@ -89,6 +89,8 @@ distillation_v2/results/stable/*/SKILL_current.md
 # Kept OUTSIDE demo-app/backend/ so uvicorn --reload doesn't restart mid-run.
 # Broad pattern covers demo-app/live_runs/ and any stale backend/live_runs/.
 live_runs/
+# Cached compare rubrics (teacher-generated per skill+workflow).
+.rubric_cache/
 
 distillation_v2/skills/*
 

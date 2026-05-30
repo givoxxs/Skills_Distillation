@@ -232,7 +232,7 @@ def test_compare_live_stream_streams_steps_and_judge(
             }
         }
 
-    def fake_judge(*, skill, prompt, original, peak, student_model):
+    def fake_judge(*, req, prompt, side_summaries, best_round, student_model):
         return {
             "winner": "peak",
             "score_original": 0.6,
@@ -418,6 +418,30 @@ def test_build_judge_user_text_fallback_when_no_docx(
         peak={"output_files": [], "skill_round": 5, "stop_reason": "success"},
     )
     assert all(b.get("type") == "text" for b in blocks)
+
+
+def test_rubric_side_payload_computes_hybrid_rule_and_checks() -> None:
+    from app.services.compare import _rubric_side_payload
+
+    class _Check:
+        def __init__(self, name, passed, score):
+            self.name = name
+            self.passed = passed
+            self.score = score
+            self.reason = "r"
+
+    class _ER:
+        checks = [_Check("a", True, 1.0), _Check("b", False, 0.0)]
+        llm_judge_score = 0.5
+        llm_judge_reasoning = "because"
+
+    p = _rubric_side_payload("Peak Skill", 5, 5, _ER(), "/tmp/out")
+    assert p["rule_score"] == 0.5  # mean(1.0, 0.0)
+    assert p["llm_judge_score"] == 0.5
+    assert p["hybrid_score"] == round(0.8 * 0.5 + 0.2 * 0.5, 4)
+    assert p["skill_md_round"] == 5
+    assert [c["name"] for c in p["rule_checks"]] == ["a", "b"]
+    assert p["rule_checks"][0]["passed"] is True
 
 
 def test_parse_judge_json_strips_markdown_fences() -> None:
