@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -407,25 +410,28 @@ def _materialize_skill_version(skill: str, skill_round: int, parent: Path) -> Pa
     return dst
 
 
-def _read_jsonl(path: str | Path | None) -> list[dict]:
-    if not path:
-        return []
-    p = Path(path)
-    if not p.exists():
-        return []
-    records: list[dict] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            records.append({"event": "raw", "line": line})
-    return records
+def _newest_jsonl(log_dir: Path) -> Path | None:
+    files = sorted(log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+    return files[-1] if files else None
 
 
-def _run_student_side(
+def _norm_step(side: str, ev: dict) -> dict:
+    return {
+        "side": side,
+        "kind": ev.get("event", "log"),
+        "iteration": ev.get("iteration"),
+        "tool": ev.get("tool"),
+        "args": ev.get("args"),
+        "result": ev.get("result"),
+        "text": ev.get("text"),
+        "stop_reason": ev.get("stop_reason"),
+        "duration_seconds": ev.get("duration_seconds"),
+        "tokens": ev.get("tokens"),
+        "ts": ev.get("ts"),
+    }
+
+
+async def _run_student_side_streaming(
     *,
     run_id: str,
     side: str,
@@ -433,7 +439,9 @@ def _run_student_side(
     skill_round: int,
     prompt: str,
     fixture_path: Path | None,
-) -> dict:
+):
+    """Async generator. Yields raw student log-event dicts as they are written,
+    then finally yields {"__result__": <side summary>}."""
     _ensure_distillation_imports()
     from runner.config import RunConfigV2
     from stages.student import run_student
@@ -444,6 +452,7 @@ def _run_student_side(
     skill_dir = _materialize_skill_version(skill, skill_round, work_root)
     output_dir = work_root / "outputs"
     log_dir = work_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     config = RunConfigV2(
         openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
@@ -453,25 +462,117 @@ def _run_student_side(
         output_dir=str(output_dir),
         input_files=[fixture_path] if fixture_path else [],
     )
-    result = run_student(
-        user_prompt=prompt,
-        skill_name=skill,
-        skill_dir=skill_dir,
-        model=student_model,
-        config=config,
-        max_retries=1,
-    )
-    return {
-        "side": side,
-        "skill_round": skill_round,
-        "stop_reason": result.get("stop_reason", "unknown"),
-        "iterations": result.get("iterations", 0),
-        "duration_seconds": result.get("duration_seconds", 0.0),
-        "token_usage": result.get("token_usage", {"prompt": 0, "completion": 0}),
-        "output_files": result.get("output_files", []),
-        "log_file": str(result.get("log_file", "")),
-        "log_records": _read_jsonl(result.get("log_file")),
+
+    box: dict = {}
+
+    def _worker():
+        try:
+            box["result"] = run_student(
+                user_prompt=prompt,
+                skill_name=skill,
+                skill_dir=skill_dir,
+                model=student_model,
+                config=config,
+                max_retries=1,
+            )
+        except Exception as e:  # noqa: BLE001
+            box["result"] = {"stop_reason": f"runner_error: {type(e).__name__}"}
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
+    log_path: Path | None = None
+    emitted = 0
+    while True:
+        if log_path is None:
+            log_path = _newest_jsonl(log_dir)
+        if log_path and log_path.exists():
+            complete = log_path.read_text(encoding="utf-8").split("\n")[:-1]
+            while emitted < len(complete):
+                raw = complete[emitted].strip()
+                emitted += 1
+                if raw:
+                    try:
+                        yield json.loads(raw)
+                    except json.JSONDecodeError:
+                        pass
+        if not thread.is_alive():
+            if log_path and log_path.exists():
+                for raw in log_path.read_text(encoding="utf-8").split("\n")[emitted:]:
+                    raw = raw.strip()
+                    if raw:
+                        try:
+                            yield json.loads(raw)
+                        except json.JSONDecodeError:
+                            pass
+            break
+        await asyncio.sleep(0.3)
+
+    result = box.get("result", {})
+    yield {
+        "__result__": {
+            "side": side,
+            "skill_round": skill_round,
+            "stop_reason": result.get("stop_reason", "unknown"),
+            "iterations": result.get("iterations", 0),
+            "duration_seconds": result.get("duration_seconds", 0.0),
+            "token_usage": result.get("token_usage", {"prompt": 0, "completion": 0}),
+            "output_files": result.get("output_files", []),
+            "output_dir": str(output_dir),
+            "log_file": str(result.get("log_file", "")),
+        }
     }
+
+
+def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
+    """Convert the live side's output .docx → PDF and build artifact events."""
+    _ensure_distillation_imports()
+    from utils.converter import docx_to_pdf, find_docx
+
+    out_dir = Path(summ["output_dir"])
+    base = f"/api/compare/artifact?run_id={run_id}&side={side}"
+    out: list[dict] = []
+    docx = find_docx(out_dir) if out_dir.is_dir() else None
+    if docx is not None:
+        pdf = docx_to_pdf(docx)
+        if pdf is not None:
+            out.append(
+                {
+                    "side": side,
+                    "kind": "pdf",
+                    "label": docx.name,
+                    "url": f"{base}&file={pdf.name}",
+                }
+            )
+        out.append(
+            {
+                "side": side,
+                "kind": "docx",
+                "label": docx.name,
+                "url": f"{base}&file={docx.name}",
+            }
+        )
+    else:
+        text_file = next(
+            (
+                p
+                for p in (out_dir.iterdir() if out_dir.is_dir() else [])
+                if p.suffix.lower() in {".txt", ".json", ".md"}
+            ),
+            None,
+        )
+        if text_file is not None:
+            out.append(
+                {
+                    "side": side,
+                    "kind": "text",
+                    "label": text_file.name,
+                    "text": text_file.read_text(encoding="utf-8", errors="replace")[
+                        :8000
+                    ],
+                }
+            )
+    return out
 
 
 JUDGE_MODEL = "anthropic/claude-haiku-4-5"
@@ -498,61 +599,93 @@ def _parse_judge_json(raw: str) -> dict:
     }
 
 
-def _preview_output_files(files: list[str]) -> list[dict]:
-    previews: list[dict] = []
-    for f in files:
-        path = Path(f)
-        item = {"path": str(path), "exists": path.exists(), "size": 0, "preview": ""}
-        if path.exists():
-            item["size"] = path.stat().st_size
-            if path.suffix.lower() in {".txt", ".md", ".json", ".csv"}:
-                item["preview"] = path.read_text(encoding="utf-8", errors="replace")[
-                    :4000
-                ]
-        previews.append(item)
-    return previews
+def _render_side_images(summ: dict) -> list[Path]:
+    """Render the side's output .docx → PNG pages (empty list on any failure)."""
+    out_dir = summ.get("output_dir")
+    if not out_dir:
+        return []
+    _ensure_distillation_imports()
+    from utils.converter import docx_to_images, find_docx
+
+    docx = find_docx(Path(out_dir)) if Path(out_dir).is_dir() else None
+    if docx is None:
+        return []
+    return docx_to_images(docx, max_pages=3)
+
+
+def _image_block(png: Path) -> dict | None:
+    try:
+        data = base64.standard_b64encode(png.read_bytes()).decode()
+    except OSError:
+        return None
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/png", "data": data},
+    }
+
+
+def _side_text_summary(label: str, summ: dict) -> str:
+    return (
+        f"### {label}\n"
+        f"skill_round={summ.get('skill_round')} stop_reason={summ.get('stop_reason')} "
+        f"output_files={summ.get('output_files', [])}\n"
+    )
+
+
+def _build_judge_content(
+    *, skill: str, prompt: str, original: dict, peak: dict
+) -> list[dict]:
+    """Build the judge `user` content blocks: text instructions + (images | text preview)."""
+    blocks: list[dict] = [
+        {
+            "type": "text",
+            "text": (
+                f"Skill: {skill}\nTask prompt:\n{prompt}\n\n"
+                "Compare side A (original) vs side B (peak). "
+                "Below are each side's rendered output pages (or text summary)."
+            ),
+        }
+    ]
+    for label, summ in [("A · original", original), ("B · peak", peak)]:
+        blocks.append({"type": "text", "text": _side_text_summary(label, summ)})
+        images = _render_side_images(summ)
+        if images:
+            for png in images:
+                b = _image_block(png)
+                if b:
+                    blocks.append(b)
+        else:
+            for f in summ.get("output_files", []):
+                p = Path(f)
+                if p.suffix.lower() in {".txt", ".json", ".md", ".csv"} and p.is_file():
+                    blocks.append(
+                        {
+                            "type": "text",
+                            "text": f"{label} output {p.name}:\n"
+                            f"{p.read_text(encoding='utf-8', errors='replace')[:3000]}",
+                        }
+                    )
+    return blocks
 
 
 def _judge_live(
-    *,
-    skill: str,
-    prompt: str,
-    original: dict,
-    peak: dict,
-    student_model: str,
+    *, skill: str, prompt: str, original: dict, peak: dict, student_model: str
 ) -> dict:
     _ensure_distillation_imports()
     from utils.llm_call import OPENROUTER_BASE_URL, call_llm
 
     system = (
         "You are judging an Arena comparison between two versions of the same agent skill. "
-        "Return only JSON with keys winner, score_original, score_peak, rationale. "
-        "winner must be original, peak, or tie. Scores must be numbers from 0 to 1."
+        "Return ONLY JSON with keys winner, score_original, score_peak, rationale. "
+        "winner is original|peak|tie; scores are numbers 0..1."
     )
-    user = json.dumps(
-        {
-            "skill": skill,
-            "prompt": prompt,
-            "original": {
-                "skill_round": original.get("skill_round"),
-                "stop_reason": original.get("stop_reason"),
-                "output_files": _preview_output_files(original.get("output_files", [])),
-                "token_usage": original.get("token_usage", {}),
-            },
-            "peak": {
-                "skill_round": peak.get("skill_round"),
-                "stop_reason": peak.get("stop_reason"),
-                "output_files": _preview_output_files(peak.get("output_files", [])),
-                "token_usage": peak.get("token_usage", {}),
-            },
-        },
-        ensure_ascii=False,
-        indent=2,
+    content = _build_judge_content(
+        skill=skill, prompt=prompt, original=original, peak=peak
     )
     start = time.time()
     raw, usage = call_llm(
         system=system,
-        user=user,
+        user=content,
         model=JUDGE_MODEL,
         api_key=os.getenv("OPENROUTER_API_KEY", ""),
         base_url=OPENROUTER_BASE_URL,
@@ -596,40 +729,35 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
             "log", {"side": "system", "tag": "system", "line": "live compare accepted"}
         )
 
-        yield _event("status", {"phase": "run_original"})
-        original = _run_student_side(
-            run_id=run_id,
-            side="original",
-            skill=req.skill,
-            skill_round=0,
-            prompt=prompt,
-            fixture_path=fixture_path,
-        )
-        for record in original["log_records"]:
-            yield _event(
-                "jsonl", {"source": "runner", "side": "original", "record": record}
-            )
-
-        yield _event("status", {"phase": "run_peak"})
-        peak = _run_student_side(
-            run_id=run_id,
-            side="peak",
-            skill=req.skill,
-            skill_round=best_round,
-            prompt=prompt,
-            fixture_path=fixture_path,
-        )
-        for record in peak["log_records"]:
-            yield _event(
-                "jsonl", {"source": "runner", "side": "peak", "record": record}
-            )
+        side_summaries: dict[str, dict] = {}
+        for side, skill_round, phase in [
+            ("original", 0, "run_original"),
+            ("peak", best_round, "run_peak"),
+        ]:
+            yield _event("status", {"phase": phase})
+            async for ev in _run_student_side_streaming(
+                run_id=run_id,
+                side=side,
+                skill=req.skill,
+                skill_round=skill_round,
+                prompt=prompt,
+                fixture_path=fixture_path,
+            ):
+                if "__result__" in ev:
+                    summ = ev["__result__"]
+                    side_summaries[side] = summ
+                    run.output_dirs[side] = summ["output_dir"]
+                    for art in _live_artifacts(run_id, side, summ):
+                        yield _event("artifact", art)
+                else:
+                    yield _event("step", _norm_step(side, ev))
 
         yield _event("status", {"phase": "judge"})
         result = _judge_live(
             skill=req.skill,
             prompt=prompt,
-            original=original,
-            peak=peak,
+            original=side_summaries.get("original", {}),
+            peak=side_summaries.get("peak", {}),
             student_model=student_model,
         )
         result["elapsed_s"] = round(time.time() - start, 2)

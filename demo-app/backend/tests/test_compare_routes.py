@@ -173,61 +173,60 @@ def test_compare_live_rejects_unknown_fixture(
 
 
 @requires_stable
-def test_compare_live_stream_uses_runner_and_judge(
+def test_compare_live_stream_streams_steps_and_judge(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.services import compare as compare_module
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
 
-    def fake_run_side(
-        *,
-        run_id: str,
-        side: str,
-        skill: str,
-        skill_round: int,
-        prompt: str,
-        fixture_path,
+    async def fake_side_stream(
+        *, run_id, side, skill, skill_round, prompt, fixture_path
     ):
-        return {
-            "side": side,
-            "skill_round": skill_round,
-            "stop_reason": "end_turn",
+        yield {"event": "start", "skill": skill, "model": "m", "prompt": prompt}
+        yield {
+            "event": "tool_call",
+            "iteration": 1,
+            "tool": "Bash",
+            "args": {"command": "ls", "description": "list"},
+        }
+        yield {"event": "tool_result", "iteration": 1, "tool": "Bash", "result": "ok"}
+        yield {"event": "assistant_text", "iteration": 2, "text": "done"}
+        yield {
+            "event": "end",
             "iterations": 2,
-            "duration_seconds": 1.2,
-            "token_usage": {"prompt": 100, "completion": 20},
-            "output_files": [f"/tmp/{side}/agent_final.md"],
-            "log_records": [
-                {
-                    "event": "start",
-                    "skill": skill,
-                    "model": "google/gemma-4-26b-a4b-it",
-                    "prompt": prompt,
-                },
-                {
-                    "event": "end",
-                    "stop_reason": "end_turn",
-                    "tokens": {"prompt": 100, "completion": 20},
-                },
-            ],
+            "stop_reason": "success",
+            "duration_seconds": 1.0,
+            "tokens": {"prompt": 1, "completion": 1},
+        }
+        yield {
+            "__result__": {
+                "side": side,
+                "skill_round": skill_round,
+                "stop_reason": "success",
+                "iterations": 2,
+                "duration_seconds": 1.0,
+                "token_usage": {"prompt": 1, "completion": 1},
+                "output_files": [],
+                "output_dir": "/tmp/x",
+                "log_file": "",
+            }
         }
 
-    def fake_judge(
-        *, skill: str, prompt: str, original: dict, peak: dict, student_model: str
-    ):
+    def fake_judge(*, skill, prompt, original, peak, student_model):
         return {
             "winner": "peak",
             "score_original": 0.6,
             "score_peak": 0.9,
-            "rationale": "Peak output is more complete.",
+            "rationale": "peak better",
             "judge_model": "anthropic/claude-haiku-4-5",
             "student_model": student_model,
             "elapsed_s": 0.5,
-            "original_output_files": original["output_files"],
-            "peak_output_files": peak["output_files"],
+            "original_output_files": [],
+            "peak_output_files": [],
         }
 
-    monkeypatch.setattr(compare_module, "_run_student_side", fake_run_side)
+    monkeypatch.setattr(compare_module, "_run_student_side_streaming", fake_side_stream)
     monkeypatch.setattr(compare_module, "_judge_live", fake_judge)
 
     created = client.post(
@@ -242,13 +241,15 @@ def test_compare_live_stream_uses_runner_and_judge(
 
     parsed = _parse_sse(raw)
     events = [e for e, _ in parsed]
-    assert events[0] == "status"
-    assert "jsonl" in events
+    assert "step" in events
     assert "result" in events
     assert events[-1] == "complete"
+    step_sides = {d["side"] for e, d in parsed if e == "step"}
+    assert step_sides == {"original", "peak"}
+    kinds = {d["kind"] for e, d in parsed if e == "step"}
+    assert {"tool_call", "tool_result", "assistant_text"} <= kinds
     result = next(d for e, d in parsed if e == "result")
-    assert result["winner"] == "peak"
-    assert result["score_peak"] == 0.9
+    assert result["winner"] == "peak" and result["score_peak"] == 0.9
 
 
 def test_parse_judge_json_extracts_result() -> None:
@@ -334,3 +335,47 @@ def test_replay_artifact_rejects_traversal(client: TestClient) -> None:
 def test_live_artifact_unknown_run_404(client: TestClient) -> None:
     r = client.get("/api/compare/artifact?run_id=deadbeef&side=original&file=out.pdf")
     assert r.status_code == 404
+
+
+def test_build_judge_user_uses_images_when_docx(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from app.services import compare as compare_module
+
+    png = tmp_path / "page_01.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    monkeypatch.setattr(
+        compare_module,
+        "_render_side_images",
+        lambda summ: [png] if summ.get("output_files") else [],
+    )
+
+    blocks = compare_module._build_judge_content(
+        skill="docx",
+        prompt="p",
+        original={
+            "output_files": ["x.docx"],
+            "skill_round": 0,
+            "stop_reason": "success",
+        },
+        peak={"output_files": ["y.docx"], "skill_round": 5, "stop_reason": "success"},
+    )
+    kinds = [b.get("type") for b in blocks]
+    assert "image" in kinds  # at least one rendered page included
+    assert "text" in kinds
+
+
+def test_build_judge_user_text_fallback_when_no_docx(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import compare as compare_module
+
+    monkeypatch.setattr(compare_module, "_render_side_images", lambda summ: [])
+    blocks = compare_module._build_judge_content(
+        skill="docx",
+        prompt="p",
+        original={"output_files": [], "skill_round": 0, "stop_reason": "success"},
+        peak={"output_files": [], "skill_round": 5, "stop_reason": "success"},
+    )
+    assert all(b.get("type") == "text" for b in blocks)
