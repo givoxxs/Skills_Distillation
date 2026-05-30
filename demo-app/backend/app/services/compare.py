@@ -169,24 +169,37 @@ def serve_replay_artifact(
 
 
 def _ensure_live_pdf(out_dir: Path) -> Path:
-    """Render the live side's output .docx → PDF on demand, cached in out_dir
-    (the run's writable temp dir). Regenerates if the cached PDF is missing."""
+    """Render the live side's output .docx → PDF on demand, cached as
+    out_dir/_compare_view.pdf.
+
+    Converts in an ISOLATED temp dir and caches under a DEDICATED name so it
+    never collides with the judge's transient PDF: the judge renders the docx
+    via docx_to_images, which writes <docx_stem>.pdf next to the docx and then
+    DELETES it. If the view served a <docx_stem>.pdf in the same dir, that
+    delete could remove the file mid-response (FileNotFoundError → 500).
+    """
     _ensure_distillation_imports()
     from utils.converter import docx_to_pdf, find_docx
 
     docx = find_docx(out_dir)
     if docx is None:
         raise HTTPException(status_code=404, detail="no .docx to render for this side")
-    cached = out_dir / (docx.stem + ".pdf")
+    cached = out_dir / "_compare_view.pdf"
     if cached.is_file():
         return cached
     with _SOFFICE_LOCK:
         if cached.is_file():  # a concurrent request just produced it
             return cached
-        pdf = docx_to_pdf(docx)
-    if pdf is None:
-        raise HTTPException(status_code=502, detail="docx→pdf conversion failed")
-    return pdf
+        with tempfile.TemporaryDirectory(prefix="compare-livepdf-") as tmp:
+            tmp_docx = Path(tmp) / docx.name
+            shutil.copy2(docx, tmp_docx)
+            pdf = docx_to_pdf(tmp_docx)
+            if pdf is None:
+                raise HTTPException(
+                    status_code=502, detail="docx→pdf conversion failed"
+                )
+            shutil.copyfile(pdf, cached)
+    return cached
 
 
 def serve_live_artifact(run_id: str, side: str, file: str):
