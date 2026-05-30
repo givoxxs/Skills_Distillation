@@ -13,6 +13,7 @@ export function ArtifactView({ artifacts }: { artifacts: CompareArtifact[] }) {
         <iframe className="artifact-pdf" src={compareArtifactUrl(pdf.url)} title={`Document ${pdf.label}`} />
       )}
       {!pdf && png?.url && (
+        // eslint-disable-next-line @next/next/no-img-element
         <img className="artifact-img" src={compareArtifactUrl(png.url)} alt={png.label} />
       )}
       {docx?.url && (
