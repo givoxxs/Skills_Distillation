@@ -19,6 +19,24 @@ requires_stable = pytest.mark.skipif(
 )
 
 
+def _docx_artifacts_present() -> bool:
+    """True only when per-test-case artifact dirs are on disk.
+
+    CI commits the lightweight stable files (summary.json, eval_detail.jsonl,
+    SKILL_round_*.md) but NOT the heavy per-test-case outputs
+    (round_N/batch_M/tc/*.docx + rendered PNGs). Tests that need those real
+    files must skip when they're absent.
+    """
+    base = STABLE_DIR / "docx"
+    return base.exists() and any(base.glob("round_1/batch_*/tc_a01"))
+
+
+requires_docx_artifacts = pytest.mark.skipif(
+    not _docx_artifacts_present(),
+    reason="stable docx per-test-case artifact dirs not present (e.g. CI without rendered outputs)",
+)
+
+
 @requires_stable
 def test_compare_cases_returns_prompt_and_fixtures(client: TestClient) -> None:
     r = client.get("/api/compare/docx/cases")
@@ -101,6 +119,7 @@ def test_compare_replay_returns_run_id(client: TestClient) -> None:
 
 
 @requires_stable
+@requires_docx_artifacts
 def test_compare_replay_stream_emits_jsonl_and_result(client: TestClient) -> None:
     created = client.post(
         "/api/compare/replay",
@@ -300,6 +319,7 @@ def test_eval_entry_carries_batch() -> None:
 
 
 @requires_stable
+@requires_docx_artifacts
 def test_get_artifact_dir_resolves_under_stable() -> None:
     from app.config import STABLE_DIR
 
