@@ -591,17 +591,26 @@ async def _run_student_side_streaming(
     }
 
 
-def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
-    """Build artifact events for the live side. The PDF is rendered on demand by
-    the artifact endpoint (``document.pdf`` sentinel) so the URL never couples to a
-    pre-converted filename — avoiding "file not found" when names differ."""
-    _ensure_distillation_imports()
-    from utils.converter import find_docx
+_VIEW_TEXT_EXT = {".md", ".txt", ".json", ".csv", ".html", ".xml", ".log"}
+_VIEW_IMG_EXT = {".png", ".gif", ".jpg", ".jpeg", ".webp"}
 
+
+def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
+    """List ALL viewable output files this side produced (not just one), so any
+    skill works: docx→PDF iframe + download, images (e.g. slack gifs) inline,
+    text/markdown/json inline. Skips dirs (venv/) and byproducts (page_*.png
+    judge renders, _compare_view.pdf). The PDF uses the document.pdf sentinel so
+    its URL never couples to a converted filename."""
     out_dir = Path(summ["output_dir"])
     base = f"/api/compare/artifact?run_id={run_id}&side={side}"
     out: list[dict] = []
-    docx = find_docx(out_dir) if out_dir.is_dir() else None
+    if not out_dir.is_dir():
+        return out
+
+    _ensure_distillation_imports()
+    from utils.converter import find_docx
+
+    docx = find_docx(out_dir)
     if docx is not None:
         out.append(
             {
@@ -611,34 +620,41 @@ def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
                 "url": f"{base}&file=document.pdf",
             }
         )
-        out.append(
-            {
-                "side": side,
-                "kind": "docx",
-                "label": docx.name,
-                "url": f"{base}&file={docx.name}",
-            }
-        )
-    else:
-        text_file = next(
-            (
-                p
-                for p in (out_dir.iterdir() if out_dir.is_dir() else [])
-                if p.suffix.lower() in {".txt", ".json", ".md"}
-            ),
-            None,
-        )
-        if text_file is not None:
+
+    # agent_final.md is the agent's closing note — show it last, after the real
+    # deliverables (output.*, etc.).
+    files = sorted(
+        (p for p in out_dir.iterdir() if p.is_file()),
+        key=lambda p: (p.name == "agent_final.md", p.name),
+    )
+    for p in files:
+        name, ext = p.name, p.suffix.lower()
+        if name == "_compare_view.pdf" or (ext == ".png" and name.startswith("page_")):
+            continue  # internal byproducts
+        if ext == ".docx":
             out.append(
                 {
                     "side": side,
-                    "kind": "text",
-                    "label": text_file.name,
-                    "text": text_file.read_text(encoding="utf-8", errors="replace")[
-                        :8000
-                    ],
+                    "kind": "docx",
+                    "label": name,
+                    "url": f"{base}&file={name}",
                 }
             )
+        elif ext in _VIEW_IMG_EXT:
+            out.append(
+                {
+                    "side": side,
+                    "kind": "image",
+                    "label": name,
+                    "url": f"{base}&file={name}",
+                }
+            )
+        elif ext in _VIEW_TEXT_EXT:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")[:8000]
+            except OSError:
+                continue
+            out.append({"side": side, "kind": "text", "label": name, "text": text})
     return out
 
 

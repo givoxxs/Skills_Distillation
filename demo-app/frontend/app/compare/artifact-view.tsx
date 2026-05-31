@@ -3,30 +3,47 @@ import type { CompareArtifact } from "@/lib/types";
 
 export function ArtifactView({ artifacts }: { artifacts: CompareArtifact[] }) {
   const pdf = artifacts.find((a) => a.kind === "pdf");
-  const docx = artifacts.find((a) => a.kind === "docx");
+  const docxFiles = artifacts.filter((a) => a.kind === "docx");
+  const images = artifacts.filter((a) => a.kind === "image" || a.kind === "png");
   const texts = artifacts.filter((a) => a.kind === "text");
-  const png = artifacts.find((a) => a.kind === "png");
 
   return (
     <div className="artifact-view stack-sm">
       {pdf?.url && (
-        <iframe className="artifact-pdf" src={compareArtifactUrl(pdf.url)} title={`Document ${pdf.label}`} />
+        <iframe
+          className="artifact-pdf"
+          src={compareArtifactUrl(pdf.url)}
+          title={`Document ${pdf.label}`}
+        />
       )}
-      {!pdf && png?.url && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img className="artifact-img" src={compareArtifactUrl(png.url)} alt={png.label} />
+
+      {images.map((img) =>
+        img.url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={img.label}
+            className="artifact-img"
+            src={compareArtifactUrl(img.url)}
+            alt={img.label}
+          />
+        ) : null
       )}
-      {docx?.url && (
-        <a className="btn btn-sm" href={compareArtifactUrl(docx.url)} download>
-          Tải {docx.label}
-        </a>
-      )}
+
       {texts.map((t, i) => (
-        <details key={i} className="artifact-text" open={i === 0}>
+        <details key={t.label} className="artifact-text" open={i === 0}>
           <summary>{t.label}</summary>
           <pre>{t.text}</pre>
         </details>
       ))}
+
+      {docxFiles.map((d) =>
+        d.url ? (
+          <a key={d.label} className="btn btn-sm" href={compareArtifactUrl(d.url)} download>
+            Tải {d.label}
+          </a>
+        ) : null
+      )}
+
       {artifacts.length === 0 && <div className="muted">No output produced.</div>}
     </div>
   );

@@ -117,7 +117,7 @@ export type CompareStep = {
 
 export type CompareArtifact = {
   side: "original" | "peak";
-  kind: "pdf" | "docx" | "text" | "png";
+  kind: "pdf" | "docx" | "text" | "png" | "image";
   label: string;
   url?: string;
   text?: string;
