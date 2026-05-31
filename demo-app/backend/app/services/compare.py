@@ -879,6 +879,7 @@ def _judge_live_rubric(
         ensemble_n=1,
         anthropic_api_key=os.getenv("OPENROUTER_API_KEY", ""),
         base_url=OPENROUTER_BASE_URL,
+        temperature=0.0,  # deterministic live judging
     )
     tc_with_skill = {**tc, "skill": req.skill}
     fixture = _live_prompt(req)[1] if workflow == "read" else None
