@@ -99,7 +99,16 @@ def _serve_file(path: Path, *, download: bool = False):
     media = {
         ".pdf": "application/pdf",
         ".png": "image/png",
+        ".gif": "image/gif",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".txt": "text/plain; charset=utf-8",
+        ".md": "text/markdown; charset=utf-8",
+        ".json": "application/json",
+        ".csv": "text/csv; charset=utf-8",
+        ".html": "text/html; charset=utf-8",
     }.get(suffix, "application/octet-stream")
     disposition = "attachment" if download else "inline"
     return FileResponse(
@@ -307,83 +316,84 @@ def _replay_result(run: CompareRun) -> dict:
     }
 
 
-def _replay_artifacts(
-    skill: str, side: str, round_n: int, batch: int, test_case_id: str
-) -> list[dict]:
-    """Build artifact events for one replay side from stable files."""
-    try:
-        art_dir = data_loader.get_artifact_dir(skill, round_n, batch, test_case_id)
-    except HTTPException:
+_VIEW_TEXT_EXT = {".md", ".txt", ".json", ".csv", ".html", ".xml", ".log"}
+_VIEW_IMG_EXT = {".png", ".gif", ".jpg", ".jpeg", ".webp"}
+
+
+def _list_artifacts(side: str, files_dir: Path, base_url: str) -> list[dict]:
+    """List every viewable file in files_dir as an artifact (shared by replay +
+    live). `base_url` is the artifact-endpoint prefix; `&file=<name>` is appended.
+
+    - .docx → a PDF iframe (document.pdf sentinel) + a download link
+    - images (.png/.gif/.jpg/...) → inline
+    - text (.md/.txt/.json/.csv/.html/...) → inline content
+
+    Skips dirs (e.g. venv/) and byproducts (page_*.png judge renders,
+    _compare_view.pdf). The real deliverable (output.*) sorts before
+    agent_final.md (the agent's closing note)."""
+    if not files_dir.is_dir():
         return []
+    _ensure_distillation_imports()
+    from utils.converter import find_docx
+
     out: list[dict] = []
-    base = (
-        f"/api/compare/{skill}/artifact?round={round_n}&batch={batch}&tc={test_case_id}"
-    )
-    docx = next(
-        (p for p in sorted(art_dir.glob("*.docx")) if "fixture" not in p.name.lower()),
-        None,
-    )
+    docx = find_docx(files_dir)
     if docx is not None:
         out.append(
             {
                 "side": side,
                 "kind": "pdf",
                 "label": docx.name,
-                "url": f"{base}&file=document.pdf",
-                "round": round_n,
-                "batch": batch,
-                "test_case_id": test_case_id,
+                "url": f"{base_url}&file=document.pdf",
             }
         )
-        out.append(
-            {
-                "side": side,
-                "kind": "docx",
-                "label": docx.name,
-                "url": f"{base}&file={docx.name}",
-                "round": round_n,
-                "batch": batch,
-                "test_case_id": test_case_id,
-            }
-        )
-    else:
-        text_file = next(
-            (
-                p
-                for p in art_dir.iterdir()
-                if p.suffix.lower() in {".txt", ".json", ".md"}
-                and p.name != "agent_final.md"
-            ),
-            None,
-        )
-        if text_file is not None:
+    files = sorted(
+        (p for p in files_dir.iterdir() if p.is_file()),
+        key=lambda p: (p.name == "agent_final.md", p.name),
+    )
+    for p in files:
+        name, ext = p.name, p.suffix.lower()
+        if name == "_compare_view.pdf" or (ext == ".png" and name.startswith("page_")):
+            continue
+        if ext == ".docx":
             out.append(
                 {
                     "side": side,
-                    "kind": "text",
-                    "label": text_file.name,
-                    "text": text_file.read_text(encoding="utf-8", errors="replace")[
-                        :8000
-                    ],
-                    "round": round_n,
-                    "batch": batch,
-                    "test_case_id": test_case_id,
+                    "kind": "docx",
+                    "label": name,
+                    "url": f"{base_url}&file={name}",
                 }
             )
-    final = art_dir / "agent_final.md"
-    if final.is_file():
-        out.append(
-            {
-                "side": side,
-                "kind": "text",
-                "label": "agent_final.md",
-                "text": final.read_text(encoding="utf-8", errors="replace")[:8000],
-                "round": round_n,
-                "batch": batch,
-                "test_case_id": test_case_id,
-            }
-        )
+        elif ext in _VIEW_IMG_EXT:
+            out.append(
+                {
+                    "side": side,
+                    "kind": "image",
+                    "label": name,
+                    "url": f"{base_url}&file={name}",
+                }
+            )
+        elif ext in _VIEW_TEXT_EXT:
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")[:8000]
+            except OSError:
+                continue
+            out.append({"side": side, "kind": "text", "label": name, "text": text})
     return out
+
+
+def _replay_artifacts(
+    skill: str, side: str, round_n: int, batch: int, test_case_id: str
+) -> list[dict]:
+    """List artifacts for one replay side from its stable files."""
+    try:
+        art_dir = data_loader.get_artifact_dir(skill, round_n, batch, test_case_id)
+    except HTTPException:
+        return []
+    base = (
+        f"/api/compare/{skill}/artifact?round={round_n}&batch={batch}&tc={test_case_id}"
+    )
+    return _list_artifacts(side, art_dir, base)
 
 
 async def stream_replay(run_id: str) -> AsyncIterator[str]:
@@ -591,71 +601,11 @@ async def _run_student_side_streaming(
     }
 
 
-_VIEW_TEXT_EXT = {".md", ".txt", ".json", ".csv", ".html", ".xml", ".log"}
-_VIEW_IMG_EXT = {".png", ".gif", ".jpg", ".jpeg", ".webp"}
-
-
 def _live_artifacts(run_id: str, side: str, summ: dict) -> list[dict]:
-    """List ALL viewable output files this side produced (not just one), so any
-    skill works: docx→PDF iframe + download, images (e.g. slack gifs) inline,
-    text/markdown/json inline. Skips dirs (venv/) and byproducts (page_*.png
-    judge renders, _compare_view.pdf). The PDF uses the document.pdf sentinel so
-    its URL never couples to a converted filename."""
+    """List all viewable output files this live side produced (shared logic)."""
     out_dir = Path(summ["output_dir"])
     base = f"/api/compare/artifact?run_id={run_id}&side={side}"
-    out: list[dict] = []
-    if not out_dir.is_dir():
-        return out
-
-    _ensure_distillation_imports()
-    from utils.converter import find_docx
-
-    docx = find_docx(out_dir)
-    if docx is not None:
-        out.append(
-            {
-                "side": side,
-                "kind": "pdf",
-                "label": docx.name,
-                "url": f"{base}&file=document.pdf",
-            }
-        )
-
-    # agent_final.md is the agent's closing note — show it last, after the real
-    # deliverables (output.*, etc.).
-    files = sorted(
-        (p for p in out_dir.iterdir() if p.is_file()),
-        key=lambda p: (p.name == "agent_final.md", p.name),
-    )
-    for p in files:
-        name, ext = p.name, p.suffix.lower()
-        if name == "_compare_view.pdf" or (ext == ".png" and name.startswith("page_")):
-            continue  # internal byproducts
-        if ext == ".docx":
-            out.append(
-                {
-                    "side": side,
-                    "kind": "docx",
-                    "label": name,
-                    "url": f"{base}&file={name}",
-                }
-            )
-        elif ext in _VIEW_IMG_EXT:
-            out.append(
-                {
-                    "side": side,
-                    "kind": "image",
-                    "label": name,
-                    "url": f"{base}&file={name}",
-                }
-            )
-        elif ext in _VIEW_TEXT_EXT:
-            try:
-                text = p.read_text(encoding="utf-8", errors="replace")[:8000]
-            except OSError:
-                continue
-            out.append({"side": side, "kind": "text", "label": name, "text": text})
-    return out
+    return _list_artifacts(side, out_dir, base)
 
 
 JUDGE_MODEL = "anthropic/claude-haiku-4-5"
