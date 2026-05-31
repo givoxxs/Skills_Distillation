@@ -61,6 +61,8 @@ export type CompareSuggestion = {
   original: number;
   peak: number;
   delta: number;
+  kind: "gradual" | "robustness";
+  note: string;
 };
 
 export type CompareCase = {

@@ -273,3 +273,22 @@
 .chip.active .chip-delta {
   color: var(--fg-on-primary);
 }
+
+/* robustness chips: baseline often fails entirely — flaky to reproduce live */
+.chip-robustness {
+  border-style: dashed;
+}
+
+.chip-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border: 1px solid var(--amber-500, var(--fg-subtle));
+  color: var(--amber-600, var(--fg-subtle));
+}
+
+.chip.active .chip-tag {
+  color: var(--fg-on-primary);
+  border-color: var(--fg-on-primary);
+}

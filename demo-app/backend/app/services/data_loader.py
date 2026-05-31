@@ -400,9 +400,28 @@ def get_artifact_dir(skill: str, round_n: int, batch: int, test_case_id: str) ->
     return path
 
 
+# A delta below this is noise, not a demo-worthy improvement.
+_SUGGEST_MIN_DELTA = 0.05
+# At/below this the baseline essentially failed (produced no/invalid output) —
+# a big delta then reflects robustness, which a single live run may not reproduce.
+_SUGGEST_BASELINE_FAIL = 0.05
+
+
 def get_compare_suggestions(skill: str, limit: int = 5) -> list[dict]:
-    """Test cases with the largest hybrid_score improvement from round 1 (≈R0
-    baseline) to the best round — the clearest original-vs-peak demos."""
+    """Test cases worth demoing original-vs-peak, ranked for LIVE reliability.
+
+    Pipeline deltas are dominated by a few "hard-fail" cases where the round-1
+    baseline produced no valid output (hybrid 0) — dramatic on paper but flaky in
+    a single live run. So we classify and prioritise:
+
+      - ``gradual``    : baseline already works, peak is consistently better.
+                         Reproduces well live → listed FIRST.
+      - ``robustness`` : baseline often fails entirely; peak fixes it. Listed
+                         after, labelled, since one live run may not reproduce.
+
+    Cases with delta < 0.05 (peak ≈ original) are dropped — they don't show
+    improvement. Each entry carries ``kind`` + a human ``note``.
+    """
     _skill_dir(skill)
     best = int(get_summary(skill).get("best_round", 1))
     r1 = {e["test_case_id"]: e for e in get_eval_detail(skill, 1)}
@@ -415,14 +434,30 @@ def get_compare_suggestions(skill: str, limit: int = 5) -> list[dict]:
             continue
         o = float(orig["hybrid_score"])
         p = float(peak["hybrid_score"])
+        delta = p - o
+        if delta < _SUGGEST_MIN_DELTA:
+            continue
+        if o <= _SUGGEST_BASELINE_FAIL:
+            kind = "robustness"
+            note = (
+                "Skill gốc thường fail (không tạo được output hợp lệ); bản distilled "
+                "khắc phục. Live 1 lần có thể không tái hiện đúng lỗi này."
+            )
+        else:
+            kind = "gradual"
+            note = "Cải thiện chất lượng ổn định — phù hợp demo live."
         rows.append(
             {
                 "test_case_id": tc_id,
                 "name": tcs.get(tc_id, {}).get("name", tc_id),
                 "original": round(o, 3),
                 "peak": round(p, 3),
-                "delta": round(p - o, 3),
+                "delta": round(delta, 3),
+                "kind": kind,
+                "note": note,
             }
         )
-    rows.sort(key=lambda r: r["delta"], reverse=True)
+    # gradual (reliable live) first, then robustness; each by delta desc.
+    _priority = {"gradual": 0, "robustness": 1}
+    rows.sort(key=lambda r: (_priority.get(r["kind"], 2), -r["delta"]))
     return rows[: max(1, limit)]

@@ -183,14 +183,18 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
       {suggestions.length > 0 && (
         <section className="suggest-row">
           <span className="suggest-label">
-            <Bi vi="💡 Cải thiện rõ nhất:" en="💡 Biggest improvements:" />
+            <Bi vi="💡 Nên demo:" en="💡 Worth demoing:" />
           </span>
           {suggestions.map((s) => (
             <button
               key={s.test_case_id}
               type="button"
-              className={"chip" + (activeCase?.id === s.test_case_id ? " active" : "")}
-              title={`${s.name} · R0 ${s.original.toFixed(2)} → peak ${s.peak.toFixed(2)}`}
+              className={
+                "chip chip-" +
+                s.kind +
+                (activeCase?.id === s.test_case_id ? " active" : "")
+              }
+              title={`${s.name} · R0 ${s.original.toFixed(2)} → peak ${s.peak.toFixed(2)}\n${s.note}`}
               onClick={() => {
                 setPromptMode("test_case");
                 setTestCaseId(s.test_case_id);
@@ -198,6 +202,7 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
               }}
             >
               {s.test_case_id} <span className="chip-delta">Δ+{s.delta.toFixed(2)}</span>
+              {s.kind === "robustness" && <span className="chip-tag">robustness</span>}
             </button>
           ))}
         </section>

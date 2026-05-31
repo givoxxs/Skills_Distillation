@@ -470,12 +470,25 @@ def test_parse_judge_json_extracts_object_from_prose() -> None:
 
 
 @requires_stable
-def test_compare_suggestions_sorted_by_delta(client: TestClient) -> None:
-    r = client.get("/api/compare/docx/suggestions?limit=3")
+def test_compare_suggestions_prioritise_reproducible_gaps(client: TestClient) -> None:
+    r = client.get("/api/compare/docx/suggestions?limit=5")
     assert r.status_code == 200
     body = r.json()
-    assert 0 < len(body) <= 3
-    assert {"test_case_id", "name", "original", "peak", "delta"} <= set(body[0])
-    deltas = [x["delta"] for x in body]
-    assert deltas == sorted(deltas, reverse=True)
-    assert body[0]["delta"] == round(body[0]["peak"] - body[0]["original"], 3)
+    assert len(body) > 0
+    assert {"test_case_id", "name", "original", "peak", "delta", "kind", "note"} <= set(
+        body[0]
+    )
+    # Only demo-worthy improvements are suggested.
+    assert all(x["delta"] >= 0.05 for x in body)
+    assert all(x["kind"] in {"gradual", "robustness"} for x in body)
+    # Reliable "gradual" cases must precede flaky-live "robustness" ones.
+    kinds = [x["kind"] for x in body]
+    first_robust = next(
+        (i for i, k in enumerate(kinds) if k == "robustness"), len(kinds)
+    )
+    assert all(k == "gradual" for k in kinds[:first_robust])
+    # Within the leading gradual block, delta is non-increasing.
+    grad = [x["delta"] for x in body if x["kind"] == "gradual"]
+    assert grad == sorted(grad, reverse=True)
+    # robustness cases are exactly the baseline-fail ones.
+    assert all(x["original"] <= 0.05 for x in body if x["kind"] == "robustness")
