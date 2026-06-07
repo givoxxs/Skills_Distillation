@@ -1,5 +1,17 @@
 """Student runner: execute one task via Claude Code CLI inside a Sandbox.
 
+exports: run_student(user_prompt, skill_name, skill_dir, model, config,
+           max_retries=3, current_skill_md=None, no_skill=False) -> dict
+         make_skip_result(tc, skill, model, round_n, output_dir) -> EvalResult
+used_by: pipeline.py (_run_batch -> run_student; skip path -> make_skip_result)
+rules:   settings.json MUST set autoCompactEnabled=false + pin the model —
+         otherwise the CLI auto-compacts via sonnet over OpenRouter and silently
+         burns credits. SKILL.md is copied to cwd/CLAUDE.md so non-Claude
+         (OpenRouter) models actually receive the skill. no_skill=True skips the
+         skill install (no SKILL.md/scripts/CLAUDE.md/"Use skill" prefix) but
+         STILL writes settings.json and copies fixtures — the zero-shot baseline.
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | added no_skill baseline mode
+
 Skill injection strategy:
   - skills/<skill_name>/  → sandbox_home/.claude/skills/<skill_name>/
     (toàn bộ folder skill được copy vào đây, Claude Code tự nhận diện)

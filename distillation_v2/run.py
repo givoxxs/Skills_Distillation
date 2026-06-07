@@ -1,5 +1,13 @@
 """CLI entry point for Skill Distillation v2.
 
+exports: main()  (click command — CLI entry point)
+used_by: __main__ (python run.py ...)
+rules:   --no-skill forces rounds=1 + dry_run + regenerate_rubric=False and
+         redirects results to results/<date>/noskill/ so the real run is not
+         wiped; it reuses the cached rubric for an apples-to-apples baseline.
+         --regenerate-rubric (CLI) OR config wins; default reuses the cache.
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | add --no-skill baseline flag
+
 Usage:
     cd distillation_v2/
     python run.py --skill docx --rounds 3 --test-cases 5 --verbose

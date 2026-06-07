@@ -1,5 +1,14 @@
 """Distillation v2 pipeline — main orchestration loop.
 
+exports: run_distillation(skill, test_cases, ..., no_skill=False) -> dict
+used_by: run.py (main -> run_distillation)
+rules:   The rubric is generated ONCE from the ORIGINAL skill_dir and held fixed
+         across all rounds — never from the working/optimized SKILL.md — so R1
+         and R_peak are scored by the same yardstick. A fresh run (no --resume)
+         rmtree's results/<skill>; callers must isolate baseline runs in a
+         separate results dir or risk wiping a real run's output.
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | thread no_skill through batch runners
+
 Flow per round:
   1. Run all batches (student → judge → run_log.md).
   2. Gate 2: if round_avg dropped > gate2_threshold vs prev round → hard rollback
