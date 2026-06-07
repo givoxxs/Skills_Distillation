@@ -1,4 +1,14 @@
-"""Base classes for LLM-only evaluation."""
+"""Base classes for LLM-only evaluation.
+
+exports: CheckResult (dataclass), EvalResult (dataclass), BaseEvaluator (Protocol),
+         PASS_THRESHOLD = 0.8
+used_by: stages/judge.py (builds EvalResult), stages/student.py (make_skip_result),
+         pipeline.py (_serialize_result, _run_one)
+rules:   llm_judge_score = -1.0 means "not scored yet" — negative scores MUST be
+         treated as 0 in averages (see pipeline._avg_judge_score), never dropped.
+         log_file holds the jsonl agent log path for this TC (run↔jsonl trace).
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | add log_file field for traceability
+"""
 
 from __future__ import annotations
 
@@ -28,6 +38,7 @@ class EvalResult:
 
     llm_judge_score: float = -1.0  # -1 = not run yet
     llm_judge_reasoning: str = ""
+    log_file: str = ""  # jsonl agent log for this TC (runner/logger.py); "" if none
 
     @property
     def failed_checks(self) -> list[CheckResult]:

@@ -405,8 +405,15 @@ def run_distillation(
     )
     n_batches = math.ceil(len(test_cases) / eff_batch)
 
+    run_id = (
+        f"{datetime.now().strftime('%Y%m%dT%H%M%S')}_{skill}_"
+        f"{'noskill' if no_skill else 'distill'}"
+    )
+    run_started_at = datetime.now().isoformat()
+
     emit("=" * 60)
     emit(f"V2 START  skill={skill}  student={student_model}  teacher={teacher_model}")
+    emit(f"RUN ID: {run_id}  (trace: logs/runs/{run_id}.json)")
     for wf, j in judges.items():
         emit(f"Rubric [{wf}]: {len(j.rubric['criteria'])} criteria")
     emit(f"TCs: {len(test_cases)}  batches/round={n_batches}  batch_size={eff_batch}")
@@ -586,6 +593,38 @@ def run_distillation(
         ],
         "rubric_cache_keys": rubric_keys,
     }
+
+    # Run manifest: index every jsonl agent log this run produced so a run can be
+    # traced from the flat logs/ dir later (run_id -> per-TC jsonl path + score).
+    manifest_dir = Path(base_config.log_dir) / "runs"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / f"{run_id}.json"
+    manifest = {
+        "run_id": run_id,
+        "started_at": run_started_at,
+        "finished_at": datetime.now().isoformat(),
+        "skill": skill,
+        "student_model": student_model,
+        "teacher_model": teacher_model,
+        "judge_model": judge_model,
+        "mode": "no_skill" if no_skill else ("dry_run" if dry_run else "distill"),
+        "rounds_run": len(history),
+        "results_dir": str(results_path),
+        "logs": [
+            {
+                "round": h["round"],
+                "test_case_id": r["test_case_id"],
+                "score": r["llm_score"],
+                "log_file": r.get("log_file", ""),
+            }
+            for h in history
+            for r in h["eval_results"]
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    summary["run_id"] = run_id
+    summary["manifest"] = str(manifest_path)
+
     (results_path / "summary.json").write_text(json.dumps(summary, indent=2))
     try:
         emit("")
@@ -593,6 +632,7 @@ def run_distillation(
         emit(
             f"DONE. Best round: {summary['best_round']}  score={summary['best_score']:.3f}"
         )
+        emit(f"Run manifest: {manifest_path}  ({len(manifest['logs'])} jsonl logs)")
     finally:
         run_log_file.close()
     return summary
@@ -684,6 +724,7 @@ def _run_batch(
         if run.get("skipped"):
             _emit(f"      SKIPPED (all {max_retry_per_tc} retries failed)")
             er = make_skip_result(tc, skill, student_model, round_n, str(output_dir))
+            er.log_file = run.get("log_file", "")
             if run.get("log_file"):
                 tc_log_paths.append(run["log_file"])
             return er, tc_log_paths
@@ -723,6 +764,7 @@ def _run_batch(
                     tc, skill, student_model, round_n, str(output_dir)
                 )
 
+        er.log_file = run.get("log_file", "")
         score = er.llm_judge_score if er.llm_judge_score >= 0 else 0.0
         status = "PASS" if score >= 0.8 else "FAIL"
         _emit(f"      [{status}] score={score:.2f}")
@@ -753,6 +795,7 @@ def _serialize_result(r: EvalResult) -> dict[str, Any]:
     return {
         "test_case_id": r.test_case_id,
         "llm_score": r.llm_judge_score if r.llm_judge_score >= 0 else None,
+        "log_file": r.log_file,
         "checks": [
             {"name": c.name, "passed": c.passed, "score": c.score, "reason": c.reason}
             for c in r.checks
@@ -834,5 +877,6 @@ def _load_cached_batch(
             ),
         )
         er.llm_judge_score = entry.get("llm_score") or 0.0
+        er.log_file = entry.get("log_file", "")
         results.append(er)
     return results

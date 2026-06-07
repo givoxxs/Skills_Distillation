@@ -333,6 +333,8 @@ def main(
         bar = "█" * int(entry["avg_score"] * 20)
         click.echo(f"  Round {entry['round']:2d}: {entry['avg_score']:.3f} {bar}")
     click.echo(f"\nResults saved to: {Path(results_dir) / skill}")
+    click.echo(f"Run ID:       {summary.get('run_id', '-')}")
+    click.echo(f"Run manifest: {summary.get('manifest', '-')}")
 
 
 if __name__ == "__main__":
