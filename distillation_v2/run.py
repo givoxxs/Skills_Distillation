@@ -6,6 +6,7 @@ Usage:
     python run.py --skill docx --dry-run                     # skip Teacher
     python run.py --skill docx --regenerate-rubric           # force new rubric
     python run.py --skill docx --resume                      # continue partial run
+    python run.py --skill docx --no-skill                    # zero-shot baseline (no SKILL.md)
 
 Config defaults are loaded from config.yaml in this directory.
 All CLI flags override the config file.
@@ -119,6 +120,14 @@ def _load_config() -> dict:
     help="Number of test cases to run concurrently (default: 1 = sequential). "
     "Use 3-5 to speed up; higher values may hit API rate limits.",
 )
+@click.option(
+    "--no-skill",
+    is_flag=True,
+    default=False,
+    help="Baseline mode: run the Student with NO skill installed (no SKILL.md, "
+    "scripts, or 'Use skill X' prefix) — zero-shot floor. Forces rounds=1 + no "
+    "Teacher, reuses the cached rubric, and writes to results/<date>/noskill/.",
+)
 def main(
     skill,
     rounds,
@@ -141,6 +150,7 @@ def main(
     no_llm_judge,
     workflow,
     parallel,
+    no_skill,
 ):
     """Run Skill Distillation v2 for one skill."""
     full_cfg = _load_config()
@@ -193,6 +203,19 @@ def main(
     max_image_pages = cfg.get("max_image_pages", 10)
     max_gif_frames = cfg.get("max_gif_frames", 5)
     watch_skill_hash = rubric_cfg.get("watch_skill_hash", False)
+
+    # --no-skill baseline: zero-shot floor. One round, no Teacher, reuse the
+    # cached rubric (so scores are directly comparable to the real run), and
+    # write to a separate dir so the real distillation results aren't wiped.
+    if no_skill:
+        rounds = 1
+        dry_run = True
+        regenerate_rubric = False
+        results_dir = str(Path(results_dir) / "noskill")
+        click.echo(
+            "[--no-skill] baseline mode: rounds=1, no Teacher, rubric from cache, "
+            f"results → {results_dir}"
+        )
 
     # Test cases file (default to v2 test_cases/)
     if test_cases_file is None:
@@ -285,6 +308,7 @@ def main(
         resume=resume,
         no_llm_judge=no_llm_judge,
         concurrent_tcs=max(1, parallel),
+        no_skill=no_skill,
     )
 
     click.echo("\n" + "=" * 60)

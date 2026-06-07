@@ -5,6 +5,11 @@ Skill injection strategy:
     (toàn bộ folder skill được copy vào đây, Claude Code tự nhận diện)
   Prompt format: "Use skill <skill_name> to: <user_task_prompt>"
 
+No-skill baseline (no_skill=True): the skill is NOT installed (no SKILL.md, no
+scripts, no cwd/CLAUDE.md, no "Use skill X to:" prefix) — only settings.json
+(model pin + autoCompactEnabled=false) and input fixtures are set up. Used to
+measure the zero-shot floor the skill must beat. Same judge/rubric as normal.
+
 Key behaviors:
   - Runs `claude --bare --model <model> -p "Use skill <skill> to: <prompt>" ...`
     inside Sandbox.
@@ -55,6 +60,7 @@ def run_student(
     config: RunConfigV2,
     max_retries: int = 3,
     current_skill_md: Path | None = None,
+    no_skill: bool = False,
 ) -> dict[str, Any]:
     """Run the student model on one task, with retry-then-skip on failure.
 
@@ -66,8 +72,10 @@ def run_student(
         config:           RunConfigV2 with sandbox + path settings.
         max_retries:      Max consecutive attempts before skipping the TC.
         current_skill_md: Working copy of SKILL.md to inject instead of skill_dir/SKILL.md.
+        no_skill:         Baseline mode — skip skill installation and the
+                          "Use skill X to:" prefix (zero-shot floor measurement).
     """
-    prompt = _build_prompt(skill_name, user_prompt)
+    prompt = _build_prompt(skill_name, user_prompt, no_skill=no_skill)
     logger = AgentLogger(log_dir=config.log_dir, skill_name=skill_name, model=model)
     logger.log_start(skill_name, model, user_prompt)
 
@@ -82,6 +90,7 @@ def run_student(
             logger,
             attempt,
             current_skill_md=current_skill_md,
+            no_skill=no_skill,
         )
         last_result = result
         stop = result.get("stop_reason", "")
@@ -140,8 +149,15 @@ def make_skip_result(
 # ── Prompt + skill injection ──────────────────────────────────────────────────
 
 
-def _build_prompt(skill_name: str, user_prompt: str) -> str:
-    """Build natural-language prompt that references the installed skill."""
+def _build_prompt(skill_name: str, user_prompt: str, no_skill: bool = False) -> str:
+    """Build the student prompt.
+
+    Normal mode references the installed skill. Baseline mode (no_skill) returns
+    the task verbatim — no skill is installed, so the "Use skill X to:" prefix
+    would point at nothing.
+    """
+    if no_skill:
+        return user_prompt
     return f"Use skill {skill_name} to: {user_prompt}"
 
 
@@ -151,6 +167,7 @@ def _install_skill_in_sandbox(
     skill_dir: Path,
     model: str = "",
     current_skill_md: Path | None = None,
+    no_skill: bool = False,
 ) -> None:
     """Install skill into the sandbox.
 
@@ -176,6 +193,13 @@ def _install_skill_in_sandbox(
     (claude_dir / "settings.json").write_text(
         json.dumps(settings, indent=2), encoding="utf-8"
     )
+
+    # Baseline mode: settings.json (model pin + autoCompactEnabled=false) is all
+    # the student needs. Do NOT copy SKILL.md, scripts, or cwd/CLAUDE.md — the
+    # student gets the task with no skill knowledge (zero-shot floor).
+    if no_skill:
+        _log.debug("no_skill: skipping skill install for %s", skill_name)
+        return
 
     if not skill_dir.is_dir():
         _log.warning(
@@ -234,6 +258,7 @@ def _run_once(
     logger: AgentLogger,
     attempt: int,
     current_skill_md: Path | None = None,
+    no_skill: bool = False,
 ) -> dict[str, Any]:
     start_ts = time.time()
     stop_reason = "unknown"
@@ -257,6 +282,7 @@ def _run_once(
                 skill_dir,
                 model=model,
                 current_skill_md=current_skill_md,
+                no_skill=no_skill,
             )
 
             # Copy input fixtures into sandbox cwd

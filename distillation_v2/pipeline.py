@@ -140,6 +140,7 @@ def _run_one_batch_persisted(
     concurrent_tcs: int,
     no_llm_judge: bool,
     emit: Callable[[str], None],
+    no_skill: bool = False,
 ) -> tuple[list[EvalResult], list[str], str]:
     """Run one batch + persist run_log.md + scores.json + eval_detail.jsonl.
 
@@ -162,6 +163,7 @@ def _run_one_batch_persisted(
         emit=emit,
         concurrent_tcs=concurrent_tcs,
         no_llm_judge=no_llm_judge,
+        no_skill=no_skill,
     )
 
     run_log_content = make_run_log(batch_results, round_n, batch_idx, batch_logs)
@@ -317,6 +319,7 @@ def run_distillation(
     resume: bool = False,
     no_llm_judge: bool = False,
     concurrent_tcs: int = 1,
+    no_skill: bool = False,
 ) -> dict[str, Any]:
     # Resolve LLM credentials + auto-prefix models for OpenRouter
     resolved_llm_key, resolved_base_url, teacher_model, judge_model = (
@@ -453,6 +456,7 @@ def run_distillation(
                 concurrent_tcs=concurrent_tcs,
                 no_llm_judge=no_llm_judge,
                 emit=emit,
+                no_skill=no_skill,
             )
             all_results.extend(batch_results)
             batch_log_paths.append(batch_logs)
@@ -603,6 +607,7 @@ def _run_batch(
     emit: Callable[[str], None],
     concurrent_tcs: int = 1,
     no_llm_judge: bool = False,
+    no_skill: bool = False,
 ) -> tuple[list[EvalResult], list[str]]:
     skill_dir = Path(base_config.skills_dir) / skill
     n = len(batch)
@@ -664,6 +669,7 @@ def _run_batch(
             config=config,
             max_retries=max_retry_per_tc,
             current_skill_md=current_skill_md,
+            no_skill=no_skill,
         )
 
         if run.get("skipped"):
