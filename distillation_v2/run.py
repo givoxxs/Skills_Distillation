@@ -7,6 +7,7 @@ rules:   --no-skill forces rounds=1 + dry_run + regenerate_rubric=False and
          wiped; it reuses the cached rubric for an apples-to-apples baseline.
          --regenerate-rubric (CLI) OR config wins; default reuses the cache.
 agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | add --no-skill baseline flag
+         claude-sonnet-4-6 | anthropic | 2026-06-08 | feat/arena-compare | add --no-feedback blind-rewrite ablation
 
 Usage:
     cd distillation_v2/
@@ -15,6 +16,7 @@ Usage:
     python run.py --skill docx --regenerate-rubric           # force new rubric
     python run.py --skill docx --resume                      # continue partial run
     python run.py --skill docx --no-skill                    # zero-shot baseline (no SKILL.md)
+    python run.py --skill docx --no-feedback --rounds 3      # blind-rewrite ablation
 
 Config defaults are loaded from config.yaml in this directory.
 All CLI flags override the config file.
@@ -136,6 +138,15 @@ def _load_config() -> dict:
     "scripts, or 'Use skill X' prefix) — zero-shot floor. Forces rounds=1 + no "
     "Teacher, reuses the cached rubric, and writes to results/<date>/noskill/.",
 )
+@click.option(
+    "--no-feedback",
+    is_flag=True,
+    default=False,
+    help="Blind-rewrite ablation: Teacher rewrites SKILL.md each round WITHOUT "
+    "seeing any run_log failure summaries — only the current SKILL.md plus a "
+    "generic 'improve for small models' instruction. Used to isolate whether the "
+    "feedback loop (not just the teacher's rewriting ability) drives improvement.",
+)
 def main(
     skill,
     rounds,
@@ -159,6 +170,7 @@ def main(
     workflow,
     parallel,
     no_skill,
+    no_feedback,
 ):
     """Run Skill Distillation v2 for one skill."""
     full_cfg = _load_config()
@@ -223,6 +235,12 @@ def main(
         click.echo(
             "[--no-skill] baseline mode: rounds=1, no Teacher, rubric from cache, "
             f"results → {results_dir}"
+        )
+
+    if no_feedback:
+        click.echo(
+            "[--no-feedback] blind-rewrite mode: Teacher rewrites SKILL.md each round "
+            "WITHOUT run_log failure data — ablation for feedback-loop value"
         )
 
     # Test cases file (default to v2 test_cases/)
@@ -317,6 +335,7 @@ def main(
         no_llm_judge=no_llm_judge,
         concurrent_tcs=max(1, parallel),
         no_skill=no_skill,
+        no_feedback=no_feedback,
     )
 
     click.echo("\n" + "=" * 60)

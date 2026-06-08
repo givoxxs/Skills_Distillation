@@ -8,6 +8,7 @@ rules:   The rubric is generated ONCE from the ORIGINAL skill_dir and held fixed
          rmtree's results/<skill>; callers must isolate baseline runs in a
          separate results dir or risk wiping a real run's output.
 agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | thread no_skill through batch runners
+         claude-sonnet-4-6 | anthropic | 2026-06-08 | feat/arena-compare | add no_feedback blind-rewrite ablation
 
 Flow per round:
   1. Run all batches (student → judge → run_log.md).
@@ -240,9 +241,13 @@ def _apply_teacher_step(
     gate1_threshold: float,
     val_batch_fn: Callable[[list[dict]], list[EvalResult]],
     emit: Callable[[str], None],
+    no_feedback: bool = False,
 ) -> None:
     """Run Teacher rewrite + Gate 1 validation. Mutates working_md only on accept."""
-    emit(f"  Teacher rewriting SKILL.md from {len(run_logs)} run_log(s)...")
+    if no_feedback:
+        emit("  Teacher rewriting SKILL.md (blind — no run_logs)...")
+    else:
+        emit(f"  Teacher rewriting SKILL.md from {len(run_logs)} run_log(s)...")
     teacher_start = time.time()
     try:
         new_skill = teacher_rewrite(
@@ -253,6 +258,7 @@ def _apply_teacher_step(
             anthropic_api_key=anthropic_api_key,
             base_url=base_url,
             temperature=teacher_temperature,
+            no_feedback=no_feedback,
         )
         emit(
             f"  Teacher done ({len(new_skill)} chars,"
@@ -329,6 +335,7 @@ def run_distillation(
     no_llm_judge: bool = False,
     concurrent_tcs: int = 1,
     no_skill: bool = False,
+    no_feedback: bool = False,
 ) -> dict[str, Any]:
     # Resolve LLM credentials + auto-prefix models for OpenRouter
     resolved_llm_key, resolved_base_url, teacher_model, judge_model = (
@@ -412,7 +419,12 @@ def run_distillation(
     run_started_at = datetime.now().isoformat()
 
     emit("=" * 60)
-    emit(f"V2 START  skill={skill}  student={student_model}  teacher={teacher_model}")
+    mode_tag = (
+        "no_skill" if no_skill else ("blind_rewrite" if no_feedback else "distill")
+    )
+    emit(
+        f"V2 START  skill={skill}  student={student_model}  teacher={teacher_model}  mode={mode_tag}"
+    )
     emit(f"RUN ID: {run_id}  (trace: logs/runs/{run_id}.json)")
     for wf, j in judges.items():
         emit(f"Rubric [{wf}]: {len(j.rubric['criteria'])} criteria")
@@ -529,6 +541,7 @@ def run_distillation(
                 gate1_threshold=gate1_threshold,
                 val_batch_fn=_val_batch,
                 emit=emit,
+                no_feedback=no_feedback,
             )
         elif dry_run:
             emit("  DRY RUN — skipping Teacher + rollback.")
@@ -607,7 +620,11 @@ def run_distillation(
         "student_model": student_model,
         "teacher_model": teacher_model,
         "judge_model": judge_model,
-        "mode": "no_skill" if no_skill else ("dry_run" if dry_run else "distill"),
+        "mode": "no_skill"
+        if no_skill
+        else (
+            "dry_run" if dry_run else ("blind_rewrite" if no_feedback else "distill")
+        ),
         "rounds_run": len(history),
         "results_dir": str(results_path),
         "logs": [

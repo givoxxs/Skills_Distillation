@@ -2,6 +2,14 @@
 
 v2 change vs v1: Teacher is called ONCE per round (not per batch).
 It receives the concatenated run_logs from all batches in the round.
+
+exports: rewrite(skill_md_path, run_logs, ..., no_feedback=False) -> str
+used_by: pipeline.py (_apply_teacher_step -> teacher_rewrite)
+rules:   When no_feedback=True, run_logs are ignored and the teacher rewrites
+         the SKILL.md with only the generic "improve for small models" instruction
+         — used as an ablation to isolate whether the feedback loop (not just the
+         teacher's general rewriting ability) drives score improvements.
+agent:   claude-sonnet-4-6 | anthropic | 2026-06-08 | feat/arena-compare | add no_feedback blind-rewrite mode
 """
 
 from __future__ import annotations
@@ -72,6 +80,7 @@ def rewrite(
     anthropic_api_key: str | None = None,
     base_url: str | None = None,
     temperature: float = 0.3,
+    no_feedback: bool = False,
 ) -> str:
     """Rewrite SKILL.md using all batch run_logs from the current round.
 
@@ -82,6 +91,8 @@ def rewrite(
         round_n:       Current round number (for logging).
         dry_run:       If True, return unchanged SKILL.md without API call.
         anthropic_api_key: OpenRouter API key (required).
+        no_feedback:   If True, ignore run_logs and issue a generic "improve for
+                       small models" instruction (blind-rewrite ablation).
 
     Returns:
         New SKILL.md content as a string.
@@ -97,9 +108,14 @@ def rewrite(
         raise RuntimeError("teacher requires an OpenRouter API key")
     api_key = anthropic_api_key
 
-    user_prompt = _build_prompt(current_md, run_logs, round_n)
+    if no_feedback:
+        user_prompt = _build_blind_prompt(current_md, round_n)
+        n_logs_logged = 0
+    else:
+        user_prompt = _build_prompt(current_md, run_logs, round_n)
+        n_logs_logged = len(run_logs)
     return _call_api(
-        user_prompt, model, api_key, round_n, len(run_logs), base_url, temperature
+        user_prompt, model, api_key, round_n, n_logs_logged, base_url, temperature
     )
 
 
@@ -115,6 +131,25 @@ def _build_prompt(current_md: str, run_logs: list[str], round_n: int) -> str:
         f"{current_md}\n\n"
         "---\n# Round Execution Logs (all batches)\n\n"
         f"{combined_logs}\n\n"
+        "---\nNow write the improved SKILL.md:"
+    )
+
+
+def _build_blind_prompt(current_md: str, round_n: int) -> str:
+    """Blind-rewrite prompt: no run_logs, only the current SKILL.md.
+
+    Used for the no-feedback ablation. The teacher must improve the skill
+    definition using only its own knowledge of what works for small models,
+    without seeing any failure evidence from the student runs.
+    """
+    return (
+        f"Below is the current SKILL.md (Round {round_n}).\n\n"
+        "Your task: rewrite it to make it work better for small language models "
+        "(7B–30B params). Apply the rules in your system prompt.\n\n"
+        "You have no execution logs — improve based on your general knowledge of "
+        "what makes skill definitions effective for small models.\n\n"
+        "---\n# Current SKILL.md\n\n"
+        f"{current_md}\n\n"
         "---\nNow write the improved SKILL.md:"
     )
 
