@@ -29,7 +29,7 @@ services:
       - key: ALLOWED_ORIGINS
         # Replace with your Vercel domain once the frontend is deployed,
         # then redeploy. Multiple origins comma-separated.
-        value: "https://your-vercel-domain.vercel.app,http://localhost:3000"
+        value: "https://skills-distillation.vercel.app,http://localhost:3000"
       - key: PORT
         # Render injects this automatically. Listed here for clarity.
         value: "10000"
