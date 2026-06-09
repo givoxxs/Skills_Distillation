@@ -4,7 +4,6 @@
 
 FROM python:3.12-slim
 
-# Faster, smaller installs.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -12,22 +11,47 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Runtime deps only — pin to roughly the versions verified locally in the
-# conda env "skills" so the production runtime matches dev behaviour.
+# ── System deps ────────────────────────────────────────────────────────────
+# nodejs + npm        : Claude Code CLI runtime (live compare runs `claude -p`)
+# libreoffice-writer  : soffice for docx → PDF conversion
+# poppler-utils       : pdf2image needs pdftoppm for PDF → PNG pages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs \
+    npm \
+    libreoffice-writer \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Claude Code CLI ────────────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code
+
+# ── Python runtime deps ────────────────────────────────────────────────────
 RUN pip install \
     "fastapi>=0.135.1,<1.0" \
     "uvicorn[standard]>=0.42.0,<1.0" \
     "pydantic>=2.12.5,<3.0" \
-    "httpx>=0.28.0,<1.0"
+    "httpx>=0.28.0,<1.0" \
+    "python-dotenv>=1.0" \
+    "openai>=1.0" \
+    "anthropic>=0.30" \
+    "Pillow>=10.0" \
+    "pdf2image>=1.17"
 
-# Backend source.
+# ── App source ─────────────────────────────────────────────────────────────
 COPY demo-app/backend/app/ ./app/
 
-# Upstream data the read-only data_loader serves. Baked into the image
-# so the container is self-contained — Render can't mount the repo.
-# Keep this small: only stable results + test_cases (≈5 MB total).
+# ── Pipeline data + source ─────────────────────────────────────────────────
+# results/stable + test_cases : read-only data for replay mode
+# runner/ stages/ utils/ evaluator/ : Python source for live compare execution
+# skills/ : SKILL.md definitions and scripts materialised per live run
 COPY distillation_v2/results/stable/ /data/distillation_v2/results/stable/
 COPY distillation_v2/test_cases/     /data/distillation_v2/test_cases/
+COPY distillation_v2/runner/         /data/distillation_v2/runner/
+COPY distillation_v2/stages/         /data/distillation_v2/stages/
+COPY distillation_v2/utils/          /data/distillation_v2/utils/
+COPY distillation_v2/evaluator/      /data/distillation_v2/evaluator/
+COPY distillation_v2/skills/         /data/distillation_v2/skills/
+COPY distillation_v2/__init__.py     /data/distillation_v2/__init__.py
 
 # data_loader resolves paths from DISTILL_REPO_ROOT.
 ENV DISTILL_REPO_ROOT=/data
