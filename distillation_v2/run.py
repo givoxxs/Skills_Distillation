@@ -1,11 +1,22 @@
 """CLI entry point for Skill Distillation v2.
 
+exports: main()  (click command — CLI entry point)
+used_by: __main__ (python run.py ...)
+rules:   --no-skill forces rounds=1 + dry_run + regenerate_rubric=False and
+         redirects results to results/<date>/noskill/ so the real run is not
+         wiped; it reuses the cached rubric for an apples-to-apples baseline.
+         --regenerate-rubric (CLI) OR config wins; default reuses the cache.
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | add --no-skill baseline flag
+         claude-sonnet-4-6 | anthropic | 2026-06-08 | feat/arena-compare | add --no-feedback blind-rewrite ablation
+
 Usage:
     cd distillation_v2/
     python run.py --skill docx --rounds 3 --test-cases 5 --verbose
     python run.py --skill docx --dry-run                     # skip Teacher
     python run.py --skill docx --regenerate-rubric           # force new rubric
     python run.py --skill docx --resume                      # continue partial run
+    python run.py --skill docx --no-skill                    # zero-shot baseline (no SKILL.md)
+    python run.py --skill docx --no-feedback --rounds 3      # blind-rewrite ablation
 
 Config defaults are loaded from config.yaml in this directory.
 All CLI flags override the config file.
@@ -119,6 +130,23 @@ def _load_config() -> dict:
     help="Number of test cases to run concurrently (default: 1 = sequential). "
     "Use 3-5 to speed up; higher values may hit API rate limits.",
 )
+@click.option(
+    "--no-skill",
+    is_flag=True,
+    default=False,
+    help="Baseline mode: run the Student with NO skill installed (no SKILL.md, "
+    "scripts, or 'Use skill X' prefix) — zero-shot floor. Forces rounds=1 + no "
+    "Teacher, reuses the cached rubric, and writes to results/<date>/noskill/.",
+)
+@click.option(
+    "--no-feedback",
+    is_flag=True,
+    default=False,
+    help="Blind-rewrite ablation: Teacher rewrites SKILL.md each round WITHOUT "
+    "seeing any run_log failure summaries — only the current SKILL.md plus a "
+    "generic 'improve for small models' instruction. Used to isolate whether the "
+    "feedback loop (not just the teacher's rewriting ability) drives improvement.",
+)
 def main(
     skill,
     rounds,
@@ -141,6 +169,8 @@ def main(
     no_llm_judge,
     workflow,
     parallel,
+    no_skill,
+    no_feedback,
 ):
     """Run Skill Distillation v2 for one skill."""
     full_cfg = _load_config()
@@ -193,6 +223,25 @@ def main(
     max_image_pages = cfg.get("max_image_pages", 10)
     max_gif_frames = cfg.get("max_gif_frames", 5)
     watch_skill_hash = rubric_cfg.get("watch_skill_hash", False)
+
+    # --no-skill baseline: zero-shot floor. One round, no Teacher, reuse the
+    # cached rubric (so scores are directly comparable to the real run), and
+    # write to a separate dir so the real distillation results aren't wiped.
+    if no_skill:
+        rounds = 1
+        dry_run = True
+        regenerate_rubric = False
+        results_dir = str(Path(results_dir) / "noskill")
+        click.echo(
+            "[--no-skill] baseline mode: rounds=1, no Teacher, rubric from cache, "
+            f"results → {results_dir}"
+        )
+
+    if no_feedback:
+        click.echo(
+            "[--no-feedback] blind-rewrite mode: Teacher rewrites SKILL.md each round "
+            "WITHOUT run_log failure data — ablation for feedback-loop value"
+        )
 
     # Test cases file (default to v2 test_cases/)
     if test_cases_file is None:
@@ -285,6 +334,8 @@ def main(
         resume=resume,
         no_llm_judge=no_llm_judge,
         concurrent_tcs=max(1, parallel),
+        no_skill=no_skill,
+        no_feedback=no_feedback,
     )
 
     click.echo("\n" + "=" * 60)
@@ -301,6 +352,8 @@ def main(
         bar = "█" * int(entry["avg_score"] * 20)
         click.echo(f"  Round {entry['round']:2d}: {entry['avg_score']:.3f} {bar}")
     click.echo(f"\nResults saved to: {Path(results_dir) / skill}")
+    click.echo(f"Run ID:       {summary.get('run_id', '-')}")
+    click.echo(f"Run manifest: {summary.get('manifest', '-')}")
 
 
 if __name__ == "__main__":

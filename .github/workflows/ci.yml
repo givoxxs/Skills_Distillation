@@ -31,6 +31,7 @@ jobs:
             "uvicorn[standard]>=0.42" \
             "pydantic>=2.12" \
             "httpx>=0.28" \
+            "python-dotenv>=1.0" \
             "pytest>=8"
 
       - name: Run backend suite

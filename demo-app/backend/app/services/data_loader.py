@@ -269,6 +269,7 @@ def get_eval_detail(skill: str, round_n: int | None = None) -> list[dict]:
         out.append(
             {
                 "round": int(rd),
+                "batch": int(r.get("batch", 1)),
                 "test_case_id": tc_id,
                 "workflow": workflow,
                 "rule_score": round(float(rule_score), 4),
@@ -315,3 +316,148 @@ def get_skill_md(skill: str, round_n: int) -> tuple[int, str]:
 
     path = _skill_dir(skill) / f"SKILL_round_{chosen}.md"
     return chosen, _read_skill_md(skill, chosen, path.stat().st_mtime)
+
+
+def get_test_cases(skill: str) -> list[dict]:
+    """Return UI-safe test case metadata for one skill."""
+    _skill_dir(skill)  # validates known skill and stable directory
+    raw = _get_test_cases(skill)
+    out: list[dict] = []
+    for tc_id in sorted(raw.keys()):
+        tc = raw[tc_id]
+        fixture_files: list[str] = []
+        if tc.get("fixture_file"):
+            fixture_files.append(str(tc["fixture_file"]))
+        if tc.get("fixture_files"):
+            fixture_files.extend(str(f) for f in tc["fixture_files"])
+        out.append(
+            {
+                "id": tc_id,
+                "workflow": tc.get("workflow") or _workflow_from_id(tc_id),
+                "name": tc.get("name", tc_id),
+                "prompt": tc.get("prompt", ""),
+                "expected_behavior": tc.get("expected_behavior", ""),
+                "fixture_files": fixture_files,
+            }
+        )
+    return out
+
+
+def get_test_case(skill: str, test_case_id: str) -> dict:
+    """Return one test case metadata object or 404."""
+    for tc in get_test_cases(skill):
+        if tc["id"] == test_case_id:
+            return tc
+    raise HTTPException(
+        status_code=404, detail=f"test case not found: {skill}/{test_case_id}"
+    )
+
+
+def get_eval_entry(skill: str, round_n: int, test_case_id: str) -> dict:
+    """Return the best matching frontend-shaped eval row for one test case."""
+    matches = [
+        e
+        for e in get_eval_detail(skill, round_n)
+        if e.get("test_case_id") == test_case_id
+    ]
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail=f"eval entry not found: {skill} round {round_n} {test_case_id}",
+        )
+    return max(matches, key=lambda e: float(e.get("hybrid_score", 0.0)))
+
+
+def get_api_calls_for_test_case(skill: str, test_case_id: str) -> list[dict]:
+    """Return raw api_calls rows related to one test case."""
+    rows = get_api_calls(skill)
+    return [r for r in rows if r.get("test_case") == test_case_id]
+
+
+_TC_SAFE = re.compile(r"^tc_[a-z0-9]+$", re.IGNORECASE)
+
+
+def get_artifact_dir(skill: str, round_n: int, batch: int, test_case_id: str) -> Path:
+    """Return STABLE_DIR/{skill}/round_{round}/batch_{batch}/{tc}/ — validated.
+
+    Rejects path traversal in test_case_id and confirms the dir is under the
+    skill's stable directory.
+    """
+    if not _TC_SAFE.match(test_case_id or ""):
+        raise HTTPException(status_code=400, detail=f"bad test_case_id: {test_case_id}")
+    base = _skill_dir(skill)
+    path = (
+        base / f"round_{int(round_n)}" / f"batch_{int(batch)}" / test_case_id
+    ).resolve()
+    try:
+        path.relative_to(base.resolve())
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, detail="artifact path escapes stable dir"
+        ) from e
+    if not path.is_dir():
+        raise HTTPException(status_code=404, detail=f"artifact dir not found: {path}")
+    return path
+
+
+# A delta below this is noise, not a demo-worthy improvement.
+_SUGGEST_MIN_DELTA = 0.05
+# At/below this the baseline essentially failed (produced no/invalid output) —
+# a big delta then reflects robustness, which a single live run may not reproduce.
+_SUGGEST_BASELINE_FAIL = 0.05
+
+
+def get_compare_suggestions(skill: str, limit: int = 5) -> list[dict]:
+    """Test cases worth demoing original-vs-peak, ranked for LIVE reliability.
+
+    Pipeline deltas are dominated by a few "hard-fail" cases where the round-1
+    baseline produced no valid output (hybrid 0) — dramatic on paper but flaky in
+    a single live run. So we classify and prioritise:
+
+      - ``gradual``    : baseline already works, peak is consistently better.
+                         Reproduces well live → listed FIRST.
+      - ``robustness`` : baseline often fails entirely; peak fixes it. Listed
+                         after, labelled, since one live run may not reproduce.
+
+    Cases with delta < 0.05 (peak ≈ original) are dropped — they don't show
+    improvement. Each entry carries ``kind`` + a human ``note``.
+    """
+    _skill_dir(skill)
+    best = int(get_summary(skill).get("best_round", 1))
+    r1 = {e["test_case_id"]: e for e in get_eval_detail(skill, 1)}
+    rb = {e["test_case_id"]: e for e in get_eval_detail(skill, best)}
+    tcs = _get_test_cases(skill)
+    rows: list[dict] = []
+    for tc_id, orig in r1.items():
+        peak = rb.get(tc_id)
+        if peak is None:
+            continue
+        o = float(orig["hybrid_score"])
+        p = float(peak["hybrid_score"])
+        delta = p - o
+        if delta < _SUGGEST_MIN_DELTA:
+            continue
+        if o <= _SUGGEST_BASELINE_FAIL:
+            kind = "robustness"
+            note = (
+                "Skill gốc thường fail (không tạo được output hợp lệ); bản distilled "
+                "khắc phục. Live 1 lần có thể không tái hiện đúng lỗi này."
+            )
+        else:
+            kind = "gradual"
+            note = "Cải thiện chất lượng ổn định — phù hợp demo live."
+        rows.append(
+            {
+                "test_case_id": tc_id,
+                "name": tcs.get(tc_id, {}).get("name", tc_id),
+                "original": round(o, 3),
+                "peak": round(p, 3),
+                "delta": round(delta, 3),
+                "kind": kind,
+                "note": note,
+            }
+        )
+    # gradual (reliable live) first, then robustness; each by delta desc.
+    _priority = {"gradual": 0, "robustness": 1}
+    rows.sort(key=lambda r: (_priority.get(r["kind"], 2), -r["delta"]))
+    return rows[: max(1, limit)]

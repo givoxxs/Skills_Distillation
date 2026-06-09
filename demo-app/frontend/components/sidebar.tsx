@@ -91,6 +91,15 @@ export function Sidebar() {
         </Link>
 
         <Link
+          className={"nav-item" + (isActive("/compare") ? " active" : "")}
+          href="/compare"
+          aria-current={isActive("/compare") ? "page" : undefined}
+        >
+          <Icon name="diff" />
+          <Bi vi="So sánh" en="Compare" />
+        </Link>
+
+        <Link
           className={"nav-item" + (isActive("/about") ? " active" : "")}
           href="/about"
           aria-current={isActive("/about") ? "page" : undefined}

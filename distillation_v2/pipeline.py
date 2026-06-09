@@ -1,5 +1,15 @@
 """Distillation v2 pipeline — main orchestration loop.
 
+exports: run_distillation(skill, test_cases, ..., no_skill=False) -> dict
+used_by: run.py (main -> run_distillation)
+rules:   The rubric is generated ONCE from the ORIGINAL skill_dir and held fixed
+         across all rounds — never from the working/optimized SKILL.md — so R1
+         and R_peak are scored by the same yardstick. A fresh run (no --resume)
+         rmtree's results/<skill>; callers must isolate baseline runs in a
+         separate results dir or risk wiping a real run's output.
+agent:   claude-opus-4-8 | anthropic | 2026-06-07 | feat/arena-compare | thread no_skill through batch runners
+         claude-sonnet-4-6 | anthropic | 2026-06-08 | feat/arena-compare | add no_feedback blind-rewrite ablation
+
 Flow per round:
   1. Run all batches (student → judge → run_log.md).
   2. Gate 2: if round_avg dropped > gate2_threshold vs prev round → hard rollback
@@ -140,6 +150,7 @@ def _run_one_batch_persisted(
     concurrent_tcs: int,
     no_llm_judge: bool,
     emit: Callable[[str], None],
+    no_skill: bool = False,
 ) -> tuple[list[EvalResult], list[str], str]:
     """Run one batch + persist run_log.md + scores.json + eval_detail.jsonl.
 
@@ -162,6 +173,7 @@ def _run_one_batch_persisted(
         emit=emit,
         concurrent_tcs=concurrent_tcs,
         no_llm_judge=no_llm_judge,
+        no_skill=no_skill,
     )
 
     run_log_content = make_run_log(batch_results, round_n, batch_idx, batch_logs)
@@ -229,9 +241,13 @@ def _apply_teacher_step(
     gate1_threshold: float,
     val_batch_fn: Callable[[list[dict]], list[EvalResult]],
     emit: Callable[[str], None],
+    no_feedback: bool = False,
 ) -> None:
     """Run Teacher rewrite + Gate 1 validation. Mutates working_md only on accept."""
-    emit(f"  Teacher rewriting SKILL.md from {len(run_logs)} run_log(s)...")
+    if no_feedback:
+        emit("  Teacher rewriting SKILL.md (blind — no run_logs)...")
+    else:
+        emit(f"  Teacher rewriting SKILL.md from {len(run_logs)} run_log(s)...")
     teacher_start = time.time()
     try:
         new_skill = teacher_rewrite(
@@ -242,6 +258,7 @@ def _apply_teacher_step(
             anthropic_api_key=anthropic_api_key,
             base_url=base_url,
             temperature=teacher_temperature,
+            no_feedback=no_feedback,
         )
         emit(
             f"  Teacher done ({len(new_skill)} chars,"
@@ -317,6 +334,8 @@ def run_distillation(
     resume: bool = False,
     no_llm_judge: bool = False,
     concurrent_tcs: int = 1,
+    no_skill: bool = False,
+    no_feedback: bool = False,
 ) -> dict[str, Any]:
     # Resolve LLM credentials + auto-prefix models for OpenRouter
     resolved_llm_key, resolved_base_url, teacher_model, judge_model = (
@@ -393,8 +412,20 @@ def run_distillation(
     )
     n_batches = math.ceil(len(test_cases) / eff_batch)
 
+    run_id = (
+        f"{datetime.now().strftime('%Y%m%dT%H%M%S')}_{skill}_"
+        f"{'noskill' if no_skill else 'distill'}"
+    )
+    run_started_at = datetime.now().isoformat()
+
     emit("=" * 60)
-    emit(f"V2 START  skill={skill}  student={student_model}  teacher={teacher_model}")
+    mode_tag = (
+        "no_skill" if no_skill else ("blind_rewrite" if no_feedback else "distill")
+    )
+    emit(
+        f"V2 START  skill={skill}  student={student_model}  teacher={teacher_model}  mode={mode_tag}"
+    )
+    emit(f"RUN ID: {run_id}  (trace: logs/runs/{run_id}.json)")
     for wf, j in judges.items():
         emit(f"Rubric [{wf}]: {len(j.rubric['criteria'])} criteria")
     emit(f"TCs: {len(test_cases)}  batches/round={n_batches}  batch_size={eff_batch}")
@@ -453,6 +484,7 @@ def run_distillation(
                 concurrent_tcs=concurrent_tcs,
                 no_llm_judge=no_llm_judge,
                 emit=emit,
+                no_skill=no_skill,
             )
             all_results.extend(batch_results)
             batch_log_paths.append(batch_logs)
@@ -509,6 +541,7 @@ def run_distillation(
                 gate1_threshold=gate1_threshold,
                 val_batch_fn=_val_batch,
                 emit=emit,
+                no_feedback=no_feedback,
             )
         elif dry_run:
             emit("  DRY RUN — skipping Teacher + rollback.")
@@ -573,6 +606,42 @@ def run_distillation(
         ],
         "rubric_cache_keys": rubric_keys,
     }
+
+    # Run manifest: index every jsonl agent log this run produced so a run can be
+    # traced from the flat logs/ dir later (run_id -> per-TC jsonl path + score).
+    manifest_dir = Path(base_config.log_dir) / "runs"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = manifest_dir / f"{run_id}.json"
+    manifest = {
+        "run_id": run_id,
+        "started_at": run_started_at,
+        "finished_at": datetime.now().isoformat(),
+        "skill": skill,
+        "student_model": student_model,
+        "teacher_model": teacher_model,
+        "judge_model": judge_model,
+        "mode": "no_skill"
+        if no_skill
+        else (
+            "dry_run" if dry_run else ("blind_rewrite" if no_feedback else "distill")
+        ),
+        "rounds_run": len(history),
+        "results_dir": str(results_path),
+        "logs": [
+            {
+                "round": h["round"],
+                "test_case_id": r["test_case_id"],
+                "score": r["llm_score"],
+                "log_file": r.get("log_file", ""),
+            }
+            for h in history
+            for r in h["eval_results"]
+        ],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    summary["run_id"] = run_id
+    summary["manifest"] = str(manifest_path)
+
     (results_path / "summary.json").write_text(json.dumps(summary, indent=2))
     try:
         emit("")
@@ -580,6 +649,7 @@ def run_distillation(
         emit(
             f"DONE. Best round: {summary['best_round']}  score={summary['best_score']:.3f}"
         )
+        emit(f"Run manifest: {manifest_path}  ({len(manifest['logs'])} jsonl logs)")
     finally:
         run_log_file.close()
     return summary
@@ -603,6 +673,7 @@ def _run_batch(
     emit: Callable[[str], None],
     concurrent_tcs: int = 1,
     no_llm_judge: bool = False,
+    no_skill: bool = False,
 ) -> tuple[list[EvalResult], list[str]]:
     skill_dir = Path(base_config.skills_dir) / skill
     n = len(batch)
@@ -664,11 +735,13 @@ def _run_batch(
             config=config,
             max_retries=max_retry_per_tc,
             current_skill_md=current_skill_md,
+            no_skill=no_skill,
         )
 
         if run.get("skipped"):
             _emit(f"      SKIPPED (all {max_retry_per_tc} retries failed)")
             er = make_skip_result(tc, skill, student_model, round_n, str(output_dir))
+            er.log_file = run.get("log_file", "")
             if run.get("log_file"):
                 tc_log_paths.append(run["log_file"])
             return er, tc_log_paths
@@ -708,6 +781,7 @@ def _run_batch(
                     tc, skill, student_model, round_n, str(output_dir)
                 )
 
+        er.log_file = run.get("log_file", "")
         score = er.llm_judge_score if er.llm_judge_score >= 0 else 0.0
         status = "PASS" if score >= 0.8 else "FAIL"
         _emit(f"      [{status}] score={score:.2f}")
@@ -738,6 +812,7 @@ def _serialize_result(r: EvalResult) -> dict[str, Any]:
     return {
         "test_case_id": r.test_case_id,
         "llm_score": r.llm_judge_score if r.llm_judge_score >= 0 else None,
+        "log_file": r.log_file,
         "checks": [
             {"name": c.name, "passed": c.passed, "score": c.score, "reason": c.reason}
             for c in r.checks
@@ -819,5 +894,6 @@ def _load_cached_batch(
             ),
         )
         er.llm_judge_score = entry.get("llm_score") or 0.0
+        er.log_file = entry.get("log_file", "")
         results.append(er)
     return results

@@ -83,3 +83,12 @@ def test_pdf_to_images_respects_max_pages(tmp_path):
     with patch("pdf2image.convert_from_path", return_value=mock_images[:3]):
         result = _pdf_to_images(pdf, max_pages=3)
     assert len(result) <= 3
+
+
+def test_docx_to_pdf_exposed_public_wrapper():
+    # docx_to_pdf must exist and return None for a missing file (no soffice needed).
+    from pathlib import Path
+
+    from utils.converter import docx_to_pdf
+
+    assert docx_to_pdf(Path("/nonexistent/file.docx")) is None
