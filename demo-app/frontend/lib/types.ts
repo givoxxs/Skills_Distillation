@@ -111,6 +111,7 @@ export type CompareStep = {
   args?: { command?: string; description?: string; [k: string]: unknown } | null;
   result?: string | null;
   text?: string | null;
+  error?: string | null;
   stop_reason?: string | null;
   duration_seconds?: number | null;
   tokens?: { prompt?: number; completion?: number; total?: number } | null;

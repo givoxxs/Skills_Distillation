@@ -903,8 +903,31 @@ button { font: inherit; cursor: pointer; }
 @media (max-width: 900px) {
   :root { --sidebar-w: 64px; }
   .app { grid-template-columns: 64px 1fr; }
-  .sidebar .brand-name, .sidebar .nav-section, .sidebar .nav-sub, .sidebar .nav-item span:not(.icon-slot) {
-    /* keep simple for mobile demo */
+  .sidebar { padding: var(--s-3) 0; }
+  .sidebar-brand { justify-content: center; padding: var(--s-2) 0 var(--s-5); }
+  .sidebar .brand-name,
+  .sidebar .nav-section,
+  .sidebar .nav-sub,
+  .sidebar-footer span {
+    display: none;
+  }
+  .nav { padding: 0 var(--s-2); }
+  .nav-item {
+    justify-content: center;
+    gap: 0;
+    padding: 10px;
+    font-size: 0;
+  }
+  .nav-item .icon {
+    width: 20px;
+    height: 20px;
+  }
+  .sidebar-footer {
+    padding: var(--s-3) var(--s-2) 0;
+    align-items: center;
+  }
+  .sidebar-footer > div {
+    justify-content: center !important;
   }
   .grid-2 { grid-template-columns: 1fr; }
   .grid-3 { grid-template-columns: 1fr; }

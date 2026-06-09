@@ -271,6 +271,23 @@ def test_compare_live_stream_streams_steps_and_judge(
     assert result["winner"] == "peak" and result["score_peak"] == 0.9
 
 
+def test_norm_step_preserves_api_error_message() -> None:
+    from app.services.compare import _norm_step
+
+    step = _norm_step(
+        "original",
+        {
+            "event": "api_error",
+            "iteration": 0,
+            "error": "OpenRouter 401: invalid key",
+            "ts": "2026-06-09T00:00:00+00:00",
+        },
+    )
+
+    assert step["kind"] == "api_error"
+    assert step["text"] == "OpenRouter 401: invalid key"
+
+
 def test_parse_judge_json_extracts_result() -> None:
     from app.services.compare import _parse_judge_json
 

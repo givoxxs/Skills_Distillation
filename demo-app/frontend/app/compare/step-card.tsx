@@ -35,6 +35,14 @@ export function StepCard({ step }: { step: CompareStep }) {
       </div>
     );
   }
+  if (step.kind === "api_error") {
+    return (
+      <div className="step step-error">
+        <div className="step-head"><span className="step-kind">api_error</span><span className="step-it">{it}</span></div>
+        <pre className="step-code">{step.error || step.text || "No error detail was provided."}</pre>
+      </div>
+    );
+  }
   if (step.kind === "start" || step.kind === "cli_init") {
     return <div className="step step-meta"><span className="step-kind">{step.kind}</span></div>;
   }

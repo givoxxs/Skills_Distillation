@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bi } from "@/components/bi";
 import { Icon } from "@/components/icon";
 import {
@@ -20,23 +20,35 @@ import type {
   CompareSuggestion,
 } from "@/lib/types";
 import { ArenaColumn } from "./arena-column";
+import {
+  buildCompareQuery,
+  comparePhaseSteps,
+  modeHelpText,
+  normalizeCompareError,
+  type CompareQueryState,
+  type CompareMode,
+  type PromptMode,
+} from "./compare-ui-state";
 import { JudgeVerdict } from "./judge-verdict";
 
 type Props = {
   summaries: RealSummary[];
   casesBySkill: Record<string, CompareCase[]>;
   suggestionsBySkill: Record<string, CompareSuggestion[]>;
+  initialState: CompareQueryState;
 };
 const SKILLS = ["docx", "internal-comms", "slack-gif-creator"] as const;
 const EMPTY_SIDE: CompareSideState = { steps: [], artifacts: [], status: "idle" };
 
-export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: Props) {
-  const [skill, setSkill] = useState("docx");
-  const [mode, setMode] = useState<"replay" | "live">("replay");
-  const [promptMode, setPromptMode] = useState<"test_case" | "custom">("test_case");
-  const [testCaseId, setTestCaseId] = useState(casesBySkill.docx?.[0]?.id || "");
+export function CompareClient({ summaries, casesBySkill, suggestionsBySkill, initialState }: Props) {
+  const [skill, setSkill] = useState(initialState.skill || "docx");
+  const [mode, setMode] = useState<CompareMode>(initialState.mode || "replay");
+  const [promptMode, setPromptMode] = useState<PromptMode>(initialState.promptMode || "test_case");
+  const [testCaseId, setTestCaseId] = useState(
+    initialState.testCaseId || casesBySkill[initialState.skill || "docx"]?.[0]?.id || "",
+  );
   const [customPrompt, setCustomPrompt] = useState("");
-  const [fixtureFile, setFixtureFile] = useState("");
+  const [fixtureFile, setFixtureFile] = useState(initialState.fixtureFile || "");
   const [phase, setPhase] = useState<ComparePhase>("idle");
   const [original, setOriginal] = useState<CompareSideState>(EMPTY_SIDE);
   const [peak, setPeak] = useState<CompareSideState>(EMPTY_SIDE);
@@ -101,7 +113,7 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
     });
     es.addEventListener("log", (e) => {
       const d = JSON.parse((e as MessageEvent).data) as { side: string; tag: string; line: string };
-      if (d.tag === "error") setError(d.line);
+      if (d.tag === "error") setError(normalizeCompareError(d.line));
     });
     es.addEventListener("step", (e) => {
       const d = JSON.parse((e as MessageEvent).data) as CompareStep;
@@ -115,7 +127,7 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
       setResult(JSON.parse((e as MessageEvent).data) as CompareResult);
     });
     es.addEventListener("complete", () => es.close());
-    es.onerror = () => { setError("Stream closed. Is the backend running?"); es.close(); };
+    es.onerror = () => { setError(normalizeCompareError("Stream closed. Is the backend running?")); es.close(); };
   }
 
   async function runCompare() {
@@ -136,12 +148,37 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
       attachStream(compareLiveStreamUrl(created.run_id));
     } catch (err) {
       setPhase("error");
-      setError(err instanceof Error ? err.message : String(err));
+      setError(normalizeCompareError(err instanceof Error ? err.message : String(err)));
     }
   }
 
   const canRun = mode === "replay" || promptMode === "test_case" || customPrompt.trim().length > 0;
   const running = phase !== "idle" && phase !== "done" && phase !== "error";
+  const phaseSteps = comparePhaseSteps(phase);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextSearch = buildCompareQuery({
+      skill,
+      mode,
+      testCaseId: activeCase?.id || testCaseId,
+      promptMode,
+      fixtureFile,
+    });
+    if (window.location.search !== nextSearch) {
+      window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}`);
+    }
+  }, [activeCase?.id, fixtureFile, mode, promptMode, skill, testCaseId]);
+
+  function setModeAndReset(next: CompareMode) {
+    setMode(next);
+    resetRun();
+  }
+
+  function setPromptModeAndReset(next: PromptMode) {
+    setPromptMode(next);
+    resetRun();
+  }
 
   return (
     <div className="page stack-lg">
@@ -167,8 +204,8 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
           </select>
         </label>
         <div className="segmented">
-          <button className={mode === "replay" ? "active" : ""} onClick={() => setMode("replay")}>Replay</button>
-          <button className={mode === "live" ? "active" : ""} onClick={() => setMode("live")}>Live judge</button>
+          <button className={mode === "replay" ? "active" : ""} onClick={() => setModeAndReset("replay")}>Replay</button>
+          <button className={mode === "live" ? "active" : ""} onClick={() => setModeAndReset("live")}>Live judge</button>
         </div>
         <label>Test case
           <select className="select" value={activeCase?.id || ""} onChange={(e) => setTestCaseId(e.target.value)}>
@@ -178,12 +215,23 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
         <button className="btn btn-primary" disabled={!canRun || running} onClick={runCompare}>
           <Icon name="play" size={16} />{mode === "replay" ? "Replay comparison" : "Run live arena"}
         </button>
+        <div className="compare-mode-help">{modeHelpText(mode)}</div>
+      </section>
+
+      <section className="phase-timeline" aria-label="Compare run status">
+        {phaseSteps.map((step) => (
+          <div key={step.key} className={`phase-step phase-${step.state}`}>
+            <span className="phase-dot" />
+            <span>{step.label}</span>
+          </div>
+        ))}
       </section>
 
       {suggestions.length > 0 && (
         <section className="suggest-row">
           <span className="suggest-label">
-            <Bi vi="💡 Nên demo:" en="💡 Worth demoing:" />
+            <Icon name="spark" size={15} />
+            <Bi vi="Nên demo:" en="Worth demoing:" />
           </span>
           {suggestions.map((s) => (
             <button
@@ -211,8 +259,8 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
       {mode === "live" && (
         <section className="compare-live-controls">
           <div className="segmented">
-            <button className={promptMode === "test_case" ? "active" : ""} onClick={() => setPromptMode("test_case")}>Existing test case</button>
-            <button className={promptMode === "custom" ? "active" : ""} onClick={() => setPromptMode("custom")}>Custom prompt</button>
+            <button className={promptMode === "test_case" ? "active" : ""} onClick={() => setPromptModeAndReset("test_case")}>Existing test case</button>
+            <button className={promptMode === "custom" ? "active" : ""} onClick={() => setPromptModeAndReset("custom")}>Custom prompt</button>
           </div>
           {promptMode === "custom" && (
             <textarea className="textarea" value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} aria-label="Custom prompt" />
@@ -226,6 +274,8 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
         </section>
       )}
 
+      <JudgeVerdict result={result} />
+
       <section className="compare-prompt panel">
         <div className="panel-header"><h3 className="panel-title">Prompt</h3><span className="badge">best R{summary.best_round}</span></div>
         <div className="panel-body"><p>{promptMode === "custom" && customPrompt.trim() ? customPrompt : activeCase?.prompt}</p></div>
@@ -237,8 +287,6 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill }: P
         <ArenaColumn title="A · Original Skill (R0)" mode={mode} state={original} result={result} whichSide="original" />
         <ArenaColumn title={`B · Peak Skill R${summary.best_round}`} mode={mode} state={peak} result={result} whichSide="peak" />
       </section>
-
-      <JudgeVerdict result={result} />
     </div>
   );
 }

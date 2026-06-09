@@ -1,12 +1,20 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Icon } from "@/components/icon";
 import type { CompareResult, CompareSideState } from "@/lib/types";
 import { ArtifactView } from "./artifact-view";
 import { StepCard } from "./step-card";
 
 function fmt(v: number | null | undefined): string {
   return typeof v === "number" ? v.toFixed(3) : "n/a";
+}
+
+function emptyCopy(mode: "replay" | "live", status: CompareSideState["status"]): string {
+  if (status === "error") return "This side failed. Check the stream error above.";
+  if (status === "done") return "No viewable artifact was emitted for this side.";
+  if (mode === "replay") return "Ready to load stored artifacts and saved scores.";
+  return "Run live arena to stream tool calls and generated outputs.";
 }
 
 export function ArenaColumn({
@@ -46,8 +54,20 @@ export function ArenaColumn({
 
         {mode === "live" && (
           <div ref={ref} className="step-timeline">
-            {state.steps.length === 0 && <div className="muted">Waiting for steps…</div>}
+            {state.steps.length === 0 && (
+              <div className="arena-empty">
+                <Icon name="play" size={16} />
+                <span>{emptyCopy(mode, state.status)}</span>
+              </div>
+            )}
             {state.steps.map((s, i) => <StepCard key={i} step={s} />)}
+          </div>
+        )}
+
+        {mode === "replay" && state.artifacts.length === 0 && !side?.rule_checks && (
+          <div className="arena-empty">
+            <Icon name="doc" size={16} />
+            <span>{emptyCopy(mode, state.status)}</span>
           </div>
         )}
 
@@ -55,7 +75,7 @@ export function ArenaColumn({
 
         {state.outputDir && (
           <code className="output-path" title="Saved run folder (logs/ + outputs/)">
-            📁 {state.outputDir}
+            {state.outputDir}
           </code>
         )}
 
