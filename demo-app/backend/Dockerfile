@@ -58,6 +58,18 @@ COPY distillation_v2/__init__.py     /data/distillation_v2/__init__.py
 # data_loader resolves paths from DISTILL_REPO_ROOT.
 ENV DISTILL_REPO_ROOT=/data
 
+# Claude Code refuses `--dangerously-skip-permissions` when invoked as root.
+# Live compare also writes to /live_runs and /.rubric_cache, so create those
+# runtime dirs explicitly before dropping privileges.
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /live_runs /.rubric_cache /home/appuser/.cache \
+    && chown -R appuser:appuser /app /live_runs /.rubric_cache /home/appuser
+
+ENV HOME=/home/appuser \
+    XDG_CACHE_HOME=/home/appuser/.cache
+
+USER appuser
+
 # Render injects $PORT; default 8000 for local docker run.
 ENV PORT=8000
 EXPOSE 8000
