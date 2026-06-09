@@ -129,3 +129,6 @@ DATN_Skill_Distillation.html
 
 .devcontainer/
 factory/
+
+.frontend-slides/
+.playwright-cli/
