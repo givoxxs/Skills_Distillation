@@ -92,7 +92,8 @@ live_runs/
 # Cached compare rubrics (teacher-generated per skill+workflow).
 .rubric_cache/
 
-distillation_v2/skills/*
+distillation_v2/skills/**/__pycache__/
+distillation_v2/skills/**/*.pyc
 
 skillsbench/
 # skillsbench_tasks/

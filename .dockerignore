@@ -18,7 +18,9 @@ demo-app/backend/.pytest_cache/
 demo-app/backend/tests/
 demo-app/backend/.python-version
 
-# ── Pipeline source code (backend doesn't import it) ──────────
+# ── Pipeline source ────────────────────────────────────────────
+# runner/ stages/ utils/ evaluator/ skills/ are baked in for live compare —
+# only dev artefacts and unused dirs are excluded here.
 distillation/
 distillation_v2/__pycache__/
 distillation_v2/**/__pycache__/
@@ -26,13 +28,7 @@ distillation_v2/.pytest_cache/
 distillation_v2/.claude/
 distillation_v2/logs/
 distillation_v2/rubrics/
-distillation_v2/skills/
 distillation_v2/tests/
-distillation_v2/utils/
-distillation_v2/stages/
-distillation_v2/runner/
-distillation_v2/evaluator/
-distillation_v2/*.py
 distillation_v2/*.yaml
 distillation_v2/.python-version
 
