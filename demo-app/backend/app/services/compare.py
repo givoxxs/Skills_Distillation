@@ -1,8 +1,20 @@
+"""compare.py — replay + live side-by-side arena compare service.
+
+exports: create_replay_run, create_live_run, stream_replay, stream_live,
+         serve_replay_artifact, serve_live_artifact
+used_by: app/routes/compare.py -> all endpoints
+rules:   OPENROUTER_API_KEY must be set in env for live mode (checked in
+         create_live_run); student subprocess uses ANTHROPIC_API_KEY=<or_key>
+         + ANTHROPIC_BASE_URL=https://openrouter.ai/api (Anthropic SDK appends /v1)
+agent:   claude-sonnet-4-6 | anthropic | 2026-06-09 | feat/arena-compare | add server-level logging for student/judge failures
+"""
+
 from __future__ import annotations
 
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,6 +32,8 @@ from fastapi import HTTPException
 from app.config import DISTILL_REPO_ROOT, TEST_CASES_DIR
 from app.models import CompareLiveRequest
 from app.services import data_loader
+
+_log = logging.getLogger("app.compare")
 
 
 @dataclass
@@ -1002,19 +1016,34 @@ async def stream_live(run_id: str) -> AsyncIterator[str]:
             for t in tasks:
                 t.cancel()
 
+        for _side, _summ in side_summaries.items():
+            _stop = _summ.get("stop_reason", "")
+            if not _stop.startswith("end_turn"):
+                _log.warning("live/%s student[%s] failed: %s", run_id[:8], _side, _stop)
+
         yield _event("status", {"phase": "judge"})
-        result = _judge_live(
-            req=req,
-            prompt=prompt,
-            side_summaries=side_summaries,
-            best_round=best_round,
-            student_model=student_model,
-        )
+        try:
+            result = _judge_live(
+                req=req,
+                prompt=prompt,
+                side_summaries=side_summaries,
+                best_round=best_round,
+                student_model=student_model,
+            )
+        except Exception as judge_exc:  # noqa: BLE001
+            _log.error(
+                "live/%s judge failed: %s: %s",
+                run_id[:8],
+                type(judge_exc).__name__,
+                judge_exc,
+            )
+            raise
         result["elapsed_s"] = round(time.time() - start, 2)
         yield _event("result", result)
         yield _event("status", {"phase": "done"})
         yield _event("complete", {"run_id": run_id})
     except Exception as e:  # noqa: BLE001
+        _log.error("live/%s stream failed: %s: %s", run_id[:8], type(e).__name__, e)
         yield _event("status", {"phase": "error"})
         yield _event(
             "log",

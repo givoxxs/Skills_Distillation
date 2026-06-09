@@ -12,14 +12,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # ── System deps ────────────────────────────────────────────────────────────
-# nodejs + npm        : Claude Code CLI runtime (live compare runs `claude -p`)
+# Node 20 (NodeSource) : Claude Code CLI needs Node 20+; Debian bookworm only
+#                        ships Node 18 which may lack required runtime APIs.
 # libreoffice-writer  : soffice for docx → PDF conversion
 # poppler-utils       : pdf2image needs pdftoppm for PDF → PNG pages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    nodejs \
-    npm \
-    libreoffice-writer \
-    poppler-utils \
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends \
+        nodejs \
+        libreoffice-writer \
+        poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Claude Code CLI ────────────────────────────────────────────────────────
