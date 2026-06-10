@@ -27,6 +27,7 @@ _log = logging.getLogger("distillation.v2.judge")
 
 DEFAULT_MODEL = "claude-haiku-4-5"
 MAX_IMAGE_PAGES = 10
+MAX_GIF_FRAMES = 7
 
 _SYSTEM_PROMPT = """You evaluate AI agent outputs using a provided rubric and \
 screenshots of the output document.
@@ -64,7 +65,7 @@ class Judge:
         model: str = DEFAULT_MODEL,
         ensemble_n: int = 1,
         max_image_pages: int = MAX_IMAGE_PAGES,
-        max_gif_frames: int = 5,
+        max_gif_frames: int = MAX_GIF_FRAMES,
         anthropic_api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = 0.2,

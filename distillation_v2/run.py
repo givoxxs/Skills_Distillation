@@ -221,7 +221,7 @@ def main(
     judge_temperature = cfg.get("judge_temperature", 0.2)
     max_retry_per_tc = cfg.get("max_retry_per_tc", 3)
     max_image_pages = cfg.get("max_image_pages", 10)
-    max_gif_frames = cfg.get("max_gif_frames", 5)
+    max_gif_frames = cfg.get("max_gif_frames", 7)
     watch_skill_hash = rubric_cfg.get("watch_skill_hash", False)
 
     # --no-skill baseline: zero-shot floor. One round, no Teacher, reuse the

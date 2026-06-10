@@ -317,7 +317,7 @@ def run_distillation(
     judge_temperature: float = 0.2,
     max_retry_per_tc: int = 3,
     max_image_pages: int = 10,
-    max_gif_frames: int = 5,
+    max_gif_frames: int = 7,
     results_dir: str = "./results",
     rubric_cache_dir: str = "./rubrics",
     skills_dir: str | None = None,
