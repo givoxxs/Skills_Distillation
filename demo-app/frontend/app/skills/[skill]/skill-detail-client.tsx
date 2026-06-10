@@ -1,12 +1,17 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bi } from "@/components/bi";
 import { Icon } from "@/components/icon";
 import { LearningCurve } from "@/components/charts/learning-curve";
 import { CostStackedBar } from "@/components/charts/cost-stacked-bar";
 import { DiffViewer } from "@/components/diff-viewer";
 import type { ApiCall, EvalEntry, SkillSummary } from "@/lib/types";
+import {
+  buildSkillDetailQuery,
+  type SkillDetailQueryState,
+  type SkillDetailSortKey,
+} from "./skill-detail-ui-state";
 
 function statusBadge(score: number) {
   if (score >= 0.85)
@@ -57,8 +62,6 @@ function Stat({
   );
 }
 
-type SortKey = "test_case_id" | "workflow" | "rule_score" | "llm_judge_score" | "hybrid_score";
-
 export function SkillDetailClient({
   summary,
   workflows,
@@ -66,6 +69,7 @@ export function SkillDetailClient({
   apiCalls,
   skillMdByRound,
   bilingual,
+  initialState,
 }: {
   summary: SkillSummary;
   workflows: string[];
@@ -73,23 +77,25 @@ export function SkillDetailClient({
   apiCalls: ApiCall[];
   skillMdByRound: Record<number, string>;
   bilingual: boolean;
+  initialState: SkillDetailQueryState;
 }) {
   const r1 = summary.score_history[0].avg_score;
   const improvement = ((summary.best_score - r1) / r1) * 100;
 
-  const [fromRound, setFromRound] = useState(0);
-  const [toRound, setToRound] = useState(summary.best_round);
+  const [fromRound, setFromRound] = useState(initialState.fromRound);
+  const [toRound, setToRound] = useState(initialState.toRound);
   const leftMd = skillMdByRound[fromRound] || "";
   const rightMd = skillMdByRound[toRound] || "";
 
-  const [evalRound, setEvalRound] = useState(
-    summary.score_history[summary.score_history.length - 1].round
-  );
-  const [sortKey, setSortKey] = useState<{ key: SortKey; dir: "asc" | "desc" }>({
-    key: "hybrid_score",
-    dir: "desc",
+  const [evalRound, setEvalRound] = useState(initialState.evalRound);
+  const [sortKey, setSortKey] = useState<{ key: SkillDetailSortKey; dir: "asc" | "desc" }>({
+    key: initialState.sortKey,
+    dir: initialState.sortDir,
   });
-  const [activeTc, setActiveTc] = useState<EvalEntry | null>(null);
+  const [activeTc, setActiveTc] = useState<EvalEntry | null>(() => {
+    if (!initialState.testCaseId) return null;
+    return (evalByRound[initialState.evalRound] || []).find((row) => row.test_case_id === initialState.testCaseId) || null;
+  });
   // Dedupe by test_case_id — defensive in case upstream JSONL ever ships
   // multiple records per (round, test_case_id) (e.g. ensemble runs).
   const rows = useMemo(() => {
@@ -121,7 +127,7 @@ export function SkillDetailClient({
     return a;
   }, [rows, sortKey]);
 
-  function setSort(key: SortKey) {
+  function setSort(key: SkillDetailSortKey) {
     setSortKey((prev) =>
       prev.key === key
         ? { key, dir: prev.dir === "asc" ? "desc" : "asc" }
@@ -129,7 +135,7 @@ export function SkillDetailClient({
     );
   }
 
-  const [wfFilter, setWfFilter] = useState<string>("all");
+  const [wfFilter, setWfFilter] = useState<string>(initialState.workflow);
   const visibleRows = wfFilter === "all" ? sortedRows : sortedRows.filter((r) => r.workflow === wfFilter);
 
   const totalCost = apiCalls.reduce((a, c) => a + c.cost_usd, 0);
@@ -164,6 +170,22 @@ export function SkillDetailClient({
     };
     img.src = svg64;
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextSearch = buildSkillDetailQuery({
+      fromRound,
+      toRound,
+      evalRound,
+      workflow: wfFilter,
+      sortKey: sortKey.key,
+      sortDir: sortKey.dir,
+      testCaseId: activeTc?.test_case_id,
+    });
+    if (window.location.search !== nextSearch) {
+      window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}`);
+    }
+  }, [activeTc?.test_case_id, evalRound, fromRound, sortKey.dir, sortKey.key, toRound, wfFilter]);
 
   return (
     <div className="page stack-lg">

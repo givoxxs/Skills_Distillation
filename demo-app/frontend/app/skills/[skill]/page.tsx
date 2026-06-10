@@ -15,14 +15,17 @@ import {
 } from "@/lib/api";
 import { displayMetaFor } from "@/lib/display-meta";
 import type { EvalEntry, SkillSummary } from "@/lib/types";
+import { parseSkillDetailParams, type SkillDetailSearchParams } from "./skill-detail-ui-state";
 
 const BILINGUAL = true;
 const SUPPORTED = new Set(["docx", "internal-comms", "slack-gif-creator"]);
 
 export default async function SkillDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ skill: string }>;
+  searchParams?: Promise<SkillDetailSearchParams>;
 }) {
   const { skill } = await params;
   if (!SUPPORTED.has(skill)) notFound();
@@ -85,6 +88,14 @@ export default async function SkillDetailPage({
   // bar chart so the panel still renders something meaningful; the UI
   // carries a "demo data" badge there.
   const apiCalls = apiCallsBySkill[skill] || [];
+  const initialState = parseSkillDetailParams(await (searchParams || Promise.resolve({})), {
+    diffRounds: Array.from({ length: realSummary.rounds_run + 1 }, (_, i) => i),
+    evalRounds: realSummary.score_history.map((h) => h.round),
+    workflows,
+    fallbackFrom: 0,
+    fallbackTo: realSummary.best_round,
+    fallbackEvalRound: realSummary.score_history[realSummary.score_history.length - 1].round,
+  });
 
   return (
     <>
@@ -95,7 +106,7 @@ export default async function SkillDetailPage({
           { label: <span className="mono">{summary.skill}</span> },
         ]}
         actions={
-          <Link href="/run" className="btn btn-sm">
+          <Link href={`/run?skill=${encodeURIComponent(summary.skill)}`} className="btn btn-sm">
             <Bi vi="Chạy mini cho skill này" en="Run mini for this skill" />
           </Link>
         }
@@ -107,6 +118,7 @@ export default async function SkillDetailPage({
         apiCalls={apiCalls}
         skillMdByRound={skillMdByRound}
         bilingual={BILINGUAL}
+        initialState={initialState}
       />
     </>
   );

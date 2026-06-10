@@ -6,6 +6,7 @@ import { Bi } from "@/components/bi";
 import { Icon } from "@/components/icon";
 import { LearningCurve } from "@/components/charts/learning-curve";
 import { skillList, summaries } from "@/lib/mock-data";
+import { buildRunQuery } from "./run-ui-state";
 
 type Phase = "idle" | "queued" | "running" | "judging" | "teacher" | "done" | "error";
 type LogLine = {
@@ -36,8 +37,8 @@ function tsOf(ms: number): string {
   return `+${String(Math.floor(sec / 60)).padStart(2, "0")}:${String(sec % 60).padStart(2, "0")}`;
 }
 
-export function RunClient({ bilingual }: { bilingual: boolean }) {
-  const [picked, setPicked] = useState<string>("docx");
+export function RunClient({ initialSkill = "docx" }: { initialSkill?: string }) {
+  const [picked, setPicked] = useState<string>(initialSkill);
   const [phase, setPhase] = useState<Phase>("idle");
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [rounds, setRounds] = useState<RoundEntry[]>([]);
@@ -100,6 +101,14 @@ export function RunClient({ bilingual }: { bilingual: boolean }) {
       if (eventSourceRef.current) eventSourceRef.current.close();
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const nextSearch = buildRunQuery({ skill: picked });
+    if (window.location.search !== nextSearch) {
+      window.history.replaceState(null, "", `${window.location.pathname}${nextSearch}`);
+    }
+  }, [picked]);
 
   async function start() {
     if (phase !== "idle" && phase !== "done" && phase !== "error") return;
