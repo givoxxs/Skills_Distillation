@@ -155,6 +155,7 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill, ini
   const canRun = mode === "replay" || promptMode === "test_case" || customPrompt.trim().length > 0;
   const running = phase !== "idle" && phase !== "done" && phase !== "error";
   const phaseSteps = comparePhaseSteps(phase);
+  const promptText = promptMode === "custom" && customPrompt.trim() ? customPrompt : activeCase?.prompt || "";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -194,37 +195,65 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill, ini
         <div className="compare-status"><span className="badge">{phase}</span></div>
       </section>
 
-      <section className="compare-controls">
-        <label>Skill
-          <select className="select" value={skill} onChange={(e) => {
-            const next = e.target.value; setSkill(next);
-            setTestCaseId(casesBySkill[next]?.[0]?.id || ""); resetRun();
-          }}>
-            {SKILLS.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <div className="segmented">
-          <button className={mode === "replay" ? "active" : ""} onClick={() => setModeAndReset("replay")}>Replay</button>
-          <button className={mode === "live" ? "active" : ""} onClick={() => setModeAndReset("live")}>Live judge</button>
-        </div>
-        <label>Test case
-          <select className="select" value={activeCase?.id || ""} onChange={(e) => setTestCaseId(e.target.value)}>
-            {cases.map((c) => <option key={c.id} value={c.id}>{c.id} · {c.name}</option>)}
-          </select>
-        </label>
-        <button className="btn btn-primary" disabled={!canRun || running} onClick={runCompare}>
-          <Icon name="play" size={16} />{mode === "replay" ? "Replay comparison" : "Run live arena"}
-        </button>
-        <div className="compare-mode-help">{modeHelpText(mode)}</div>
-      </section>
-
-      <section className="phase-timeline" aria-label="Compare run status">
-        {phaseSteps.map((step) => (
-          <div key={step.key} className={`phase-step phase-${step.state}`}>
-            <span className="phase-dot" />
-            <span>{step.label}</span>
+      <section className="compare-toolbar" aria-label="Arena controls">
+        <div className="compare-controls compare-controls-main">
+          <label>Skill
+            <select className="select" value={skill} onChange={(e) => {
+              const next = e.target.value; setSkill(next);
+              setTestCaseId(casesBySkill[next]?.[0]?.id || ""); resetRun();
+            }}>
+              {SKILLS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          <div className="segmented">
+            <button className={mode === "replay" ? "active" : ""} onClick={() => setModeAndReset("replay")}>Replay</button>
+            <button className={mode === "live" ? "active" : ""} onClick={() => setModeAndReset("live")}>Live judge</button>
           </div>
-        ))}
+          <label className="compare-case-select">Test case
+            <select className="select" value={activeCase?.id || ""} onChange={(e) => setTestCaseId(e.target.value)}>
+              {cases.map((c) => <option key={c.id} value={c.id}>{c.id} · {c.name}</option>)}
+            </select>
+          </label>
+          <button className="btn btn-primary compare-run-button" disabled={!canRun || running} onClick={runCompare}>
+            <Icon name="play" size={16} />{mode === "replay" ? "Replay comparison" : "Run live arena"}
+          </button>
+          <div className="compare-mode-help">{modeHelpText(mode)}</div>
+        </div>
+
+        {mode === "live" && (
+          <section className="compare-live-controls">
+            <div className="segmented">
+              <button className={promptMode === "test_case" ? "active" : ""} onClick={() => setPromptModeAndReset("test_case")}>Existing test case</button>
+              <button className={promptMode === "custom" ? "active" : ""} onClick={() => setPromptModeAndReset("custom")}>Custom prompt</button>
+            </div>
+            {promptMode === "custom" && (
+              <textarea className="textarea" value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} aria-label="Custom prompt" />
+            )}
+            <label>Fixture
+              <select className="select" value={fixtureFile} onChange={(e) => setFixtureFile(e.target.value)}>
+                <option value="">No fixture / auto from test case</option>
+                {fixtures.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+          </section>
+        )}
+
+        <div className="compare-prompt-strip">
+          <div>
+            <div className="stat-label">Prompt</div>
+            <p>{promptText}</p>
+          </div>
+          <span className="badge">best R{summary.best_round}</span>
+        </div>
+
+        <section className="phase-timeline" aria-label="Compare run status">
+          {phaseSteps.map((step) => (
+            <div key={step.key} className={`phase-step phase-${step.state}`}>
+              <span className="phase-dot" />
+              <span>{step.label}</span>
+            </div>
+          ))}
+        </section>
       </section>
 
       {suggestions.length > 0 && (
@@ -256,32 +285,9 @@ export function CompareClient({ summaries, casesBySkill, suggestionsBySkill, ini
         </section>
       )}
 
-      {mode === "live" && (
-        <section className="compare-live-controls">
-          <div className="segmented">
-            <button className={promptMode === "test_case" ? "active" : ""} onClick={() => setPromptModeAndReset("test_case")}>Existing test case</button>
-            <button className={promptMode === "custom" ? "active" : ""} onClick={() => setPromptModeAndReset("custom")}>Custom prompt</button>
-          </div>
-          {promptMode === "custom" && (
-            <textarea className="textarea" value={customPrompt} onChange={(e) => setCustomPrompt(e.target.value)} aria-label="Custom prompt" />
-          )}
-          <label>Fixture
-            <select className="select" value={fixtureFile} onChange={(e) => setFixtureFile(e.target.value)}>
-              <option value="">No fixture / auto from test case</option>
-              {fixtures.map((f) => <option key={f} value={f}>{f}</option>)}
-            </select>
-          </label>
-        </section>
-      )}
+      {error && <div className="compare-error">{error}</div>}
 
       <JudgeVerdict result={result} />
-
-      <section className="compare-prompt panel">
-        <div className="panel-header"><h3 className="panel-title">Prompt</h3><span className="badge">best R{summary.best_round}</span></div>
-        <div className="panel-body"><p>{promptMode === "custom" && customPrompt.trim() ? customPrompt : activeCase?.prompt}</p></div>
-      </section>
-
-      {error && <div className="compare-error">{error}</div>}
 
       <section className="arena-grid">
         <ArenaColumn title="A · Original Skill (R0)" mode={mode} state={original} result={result} whichSide="original" />

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildCompareQuery,
   comparePhaseSteps,
+  compareSidePhaseSteps,
   modeHelpText,
   normalizeCompareError,
   parseCompareParams,
@@ -21,6 +22,27 @@ test("phase timeline marks completed and active live phases", () => {
       ["running", "active"],
       ["judge", "pending"],
       ["done", "pending"],
+    ],
+  );
+});
+
+test("side timeline tracks each arena column independently", () => {
+  assert.deepEqual(
+    compareSidePhaseSteps({ status: "running", artifactCount: 0, hasScores: false }).map((step) => [step.key, step.state]),
+    [
+      ["waiting", "done"],
+      ["running", "active"],
+      ["output", "pending"],
+      ["scored", "pending"],
+    ],
+  );
+  assert.deepEqual(
+    compareSidePhaseSteps({ status: "done", artifactCount: 1, hasScores: true }).map((step) => [step.key, step.state]),
+    [
+      ["waiting", "done"],
+      ["running", "done"],
+      ["output", "done"],
+      ["scored", "done"],
     ],
   );
 });

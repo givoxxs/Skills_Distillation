@@ -17,16 +17,29 @@ export function JudgeVerdict({ result }: { result: CompareResult | null }) {
       <div className="verdict-head">
         <div>
           <div className="eyebrow">Judge verdict</div>
-          <h3 className="verdict-title">{scoreDeltaLabel(result)}</h3>
+          <h3 className="verdict-title">{label}</h3>
         </div>
-        <span className="badge badge-success">{label}</span>
+        <span className="badge badge-success">{scoreDeltaLabel(result)}</span>
       </div>
       <div className="panel-body stack-sm">
+        <div className="verdict-scoreboard" aria-label="Arena score comparison">
+          <div className="verdict-side">
+            <span>A · Original</span>
+            <b>{fmt(so)}</b>
+          </div>
+          <div className="verdict-delta">
+            <span>{scoreDeltaLabel(result)}</span>
+          </div>
+          <div className="verdict-side verdict-side-peak">
+            <span>B · Peak</span>
+            <b>{fmt(sp)}</b>
+          </div>
+        </div>
         <div className="verdict-metrics">
-          <span>A original <b>{fmt(so)}</b></span>
-          <span>B peak <b>{fmt(sp)}</b></span>
           {result.judge_model && <span>judge <b>{result.judge_model}</b></span>}
           {typeof result.elapsed_s === "number" && <span>elapsed <b>{result.elapsed_s}s</b></span>}
+          {result.skill && <span>skill <b>{result.skill}</b></span>}
+          {result.test_case_id && <span>case <b>{result.test_case_id}</b></span>}
         </div>
         {(result.rationale || result.peak?.judge_rationale) && (
           <p className="muted">{result.rationale || result.peak?.judge_rationale}</p>

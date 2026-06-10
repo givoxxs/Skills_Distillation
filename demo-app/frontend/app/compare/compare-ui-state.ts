@@ -8,6 +8,12 @@ export type PhaseStep = {
   state: TimelineState;
 };
 
+export type SidePhaseStep = {
+  key: "waiting" | "running" | "output" | "scored";
+  label: string;
+  state: TimelineState;
+};
+
 export type CompareMode = "replay" | "live";
 export type PromptMode = "test_case" | "custom";
 
@@ -65,6 +71,48 @@ export function comparePhaseSteps(phase: ComparePhase): PhaseStep[] {
       key: "done",
       label: "Done",
       state: phase === "done" ? "active" : phase === "error" ? "error" : "pending",
+    },
+  ];
+}
+
+export function compareSidePhaseSteps({
+  status,
+  artifactCount,
+  hasScores,
+}: {
+  status: "idle" | "running" | "done" | "error";
+  artifactCount: number;
+  hasScores: boolean;
+}): SidePhaseStep[] {
+  if (status === "error") {
+    return [
+      { key: "waiting", label: "Waiting", state: "done" },
+      { key: "running", label: "Running", state: "error" },
+      { key: "output", label: "Output", state: "pending" },
+      { key: "scored", label: "Scored", state: "pending" },
+    ];
+  }
+
+  return [
+    {
+      key: "waiting",
+      label: "Waiting",
+      state: status === "idle" ? "active" : "done",
+    },
+    {
+      key: "running",
+      label: "Running",
+      state: status === "running" ? "active" : status === "idle" ? "pending" : "done",
+    },
+    {
+      key: "output",
+      label: "Output",
+      state: artifactCount > 0 ? "done" : status === "done" ? "active" : "pending",
+    },
+    {
+      key: "scored",
+      label: "Scored",
+      state: hasScores ? "done" : status === "done" && artifactCount === 0 ? "active" : "pending",
     },
   ];
 }
