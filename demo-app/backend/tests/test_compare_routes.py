@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 from app.config import STABLE_DIR
 from app.services import data_loader
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
 requires_stable = pytest.mark.skipif(
     not STABLE_DIR.exists(),
     reason=f"distillation_v2 stable dir missing at {STABLE_DIR}",
@@ -35,6 +37,21 @@ requires_docx_artifacts = pytest.mark.skipif(
     not _docx_artifacts_present(),
     reason="stable docx per-test-case artifact dirs not present (e.g. CI without rendered outputs)",
 )
+
+
+def test_render_docker_context_includes_test_case_fixtures() -> None:
+    """Live compare needs fixture files inside the Render Docker image."""
+    dockerignore = REPO_ROOT / ".dockerignore"
+    ignored = {
+        line.strip()
+        for line in dockerignore.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert "distillation_v2/test_cases/fixtures/" not in ignored
+    assert (
+        REPO_ROOT / "distillation_v2/test_cases/fixtures/simple_report.docx"
+    ).is_file()
 
 
 @requires_stable

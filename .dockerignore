@@ -44,9 +44,6 @@ distillation_v2/results/stable/*/validation/
 distillation_v2/results/stable/*/run.log
 distillation_v2/results/stable/*/SKILL_current.md
 
-# Binary fixtures aren't needed
-distillation_v2/test_cases/fixtures/
-
 # ── Other repo dirs not needed at runtime ─────────────────────
 skill_runner/
 skill_evaluation/
