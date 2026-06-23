@@ -36,6 +36,8 @@ Specifically, we make three main contributions:
 2. We present a reproducible, parameter-free **Teacher-Student-Judge** framework containing twin verification gates to optimize long-form agent skills directly in the natural-language space.
 3. We demonstrate empirical gains across three complex, artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) over 26 optimization rounds, yielding a mean score improvement of **+0.128** (an approximate **+17% relative increase**), demonstrating that language-level distillation can recover or exceed zero-shot performance without model retraining.
 
+![Figure 1. Overview of the artifact-aware Teacher-Student-Judge optimization loop. The Student model stays frozen; only the external skill document is rewritten from round-level failure feedback.](figures/fig1_system_overview.png)
+
 ---
 
 ## 2. Background and Related Work
@@ -278,6 +280,8 @@ Score (0-1)
            R1   R2   R3   R4   R5   R6   R7   R8   R9  R10
 ```
 **Figure 2:** Performance trajectories over optimization rounds for `docx` (solid line) and `slack-gif-creator` (dashed line).
+
+![Figure 2. Comparison of No-Skill, original skill (R1), and optimized skill (R_peak) scores across the three studied skills.](figures/fig2_baseline_results.png)
 
 ---
 
