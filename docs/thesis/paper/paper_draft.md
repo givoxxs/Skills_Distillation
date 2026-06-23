@@ -85,31 +85,32 @@ where $F_r$ represents a consolidated failure feedback report compiled by a log 
 ---
 
 ### 3.2 Teacher-Student-Judge Architecture
-The optimization framework consists of three distinct LLM agents operating in a closed loop (Figure 1):
+The optimization framework consists of three distinct LLM agents operating in a closed loop:
 
 ```mermaid
 graph TD
-    subgraph Execution Loop (Batch size B)
-        Student[Student Agent: Gemma-4-26B] -->|Produces Artifacts & Log| Env[Execution Sandbox]
-        Env -->|Artifacts & Tool Logs| Judge[LLM-as-Judge: Haiku 4.5]
+    subgraph "Execution Loop (Batch size B)"
+        Student["Student Agent: Gemma-4-26B"] -->|Produces Artifacts & Log| Env["Execution Sandbox"]
+        Env -->|Artifacts & Tool Logs| Judge["LLM-as-Judge: Haiku 4.5"]
     end
 
-    subgraph Optimization Loop (Round r)
-        Judge -->|Rubric Scores| Summarizer[Reflexion-style Summarizer]
-        Summarizer -->|Consolidated Failure Feedback F_r| Teacher[Teacher Agent: Haiku 4.5]
-        Teacher -->|Candidate Skill M_candidate| Gate1{Gate 1: Validation}
+    subgraph "Optimization Loop (Round r)"
+        Judge -->|Rubric Scores| Summarizer["Reflexion-style Summarizer"]
+        Summarizer -->|Consolidated Failure Feedback F_r| Teacher["Teacher Agent: Haiku 4.5"]
+        Teacher -->|Candidate Skill M_candidate| Gate1{"Gate 1: Validation"}
 
-        Gate1 -->|Pass| Gate2{Gate 2: Rollback}
-        Gate1 -->|Fail| Rollback1[Reject & Keep M_r]
+        Gate1 -->|Pass| Gate2{"Gate 2: Rollback"}
+        Gate1 -->|Fail| Rollback1["Reject & Keep M_r"]
 
-        Gate2 -->|Score Gain| Commit[Commit M_r+1]
-        Gate2 -->|Score Regress| Rollback2[Rollback to M_best]
+        Gate2 -->|Score Gain| Commit["Commit M_r+1"]
+        Gate2 -->|Score Regress| Rollback2["Rollback to M_best"]
     end
 
     Commit -->|Updated SKILL.md| Student
     Rollback1 -->|Keep current SKILL.md| Student
     Rollback2 -->|Restore M_best| Student
 ```
+
 **Figure 1:** Detailed system architecture of the Teacher-Student-Judge optimization loop, demonstrating the interaction between the execution sandbox, the rubric-based evaluator, the log summarizer, and the twin safety gates.
 
 1.  **Student (Execution):** The target agent model being optimized. The Student model receives the current skill $M_r$, reads the task prompt $t$, and executes tool calls (file edits, command executions, verification checks) within a sandboxed terminal environment. In our experiments, we fix the Student as `google/gemma-4-26b-a4b-it` running inside the Claude Code CLI.
