@@ -44,10 +44,12 @@ COPY demo-app/backend/app/ ./app/
 
 # ── Pipeline data + source ─────────────────────────────────────────────────
 # results/stable + test_cases : read-only data for replay mode
+# rubrics : stable judge rubrics reused by live compare (no first-run regen)
 # runner/ stages/ utils/ evaluator/ : Python source for live compare execution
 # skills/ : SKILL.md definitions and scripts materialised per live run
 COPY distillation_v2/results/stable/ /data/distillation_v2/results/stable/
 COPY distillation_v2/test_cases/     /data/distillation_v2/test_cases/
+COPY distillation_v2/rubrics/        /data/distillation_v2/rubrics/
 COPY distillation_v2/runner/         /data/distillation_v2/runner/
 COPY distillation_v2/stages/         /data/distillation_v2/stages/
 COPY distillation_v2/utils/          /data/distillation_v2/utils/
@@ -59,11 +61,11 @@ COPY distillation_v2/__init__.py     /data/distillation_v2/__init__.py
 ENV DISTILL_REPO_ROOT=/data
 
 # Claude Code refuses `--dangerously-skip-permissions` when invoked as root.
-# Live compare also writes to /live_runs and /.rubric_cache, so create those
-# runtime dirs explicitly before dropping privileges.
+# Live compare writes to /live_runs, so create it explicitly before dropping
+# privileges.
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
-    && mkdir -p /live_runs /.rubric_cache /home/appuser/.cache \
-    && chown -R appuser:appuser /app /live_runs /.rubric_cache /home/appuser
+    && mkdir -p /live_runs /home/appuser/.cache \
+    && chown -R appuser:appuser /app /live_runs /home/appuser
 
 ENV HOME=/home/appuser \
     XDG_CACHE_HOME=/home/appuser/.cache

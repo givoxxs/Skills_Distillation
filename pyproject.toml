@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Givoxxs", email = ""}
+    {name = "Givoxxs", email = "phanvantoan.contact@gmail.com"}
 ]
 keywords = ["skill-distillation", "prompt-optimization", "small-language-models", "agent-skills", "claude", "qwen"]
 classifiers = [
@@ -61,7 +61,7 @@ python_functions = "test_*"
 addopts = "-ra --strict-markers"
 
 [tool.setuptools]
-packages = ["distillation", "distillation_v2", "skill_runner", "skill_evaluation"]
+packages = ["distillation", "distillation_v2", "skill_runner"]
 
 [tool.setuptools.package-data]
 skill_runner = [

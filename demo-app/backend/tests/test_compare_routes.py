@@ -215,10 +215,12 @@ def test_compare_live_stream_streams_steps_and_judge(
     from app.services import compare as compare_module
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    side_calls = []
 
     async def fake_side_stream(
         *, run_id, side, skill, skill_round, prompt, fixture_path
     ):
+        side_calls.append((side, skill_round))
         yield {"event": "start", "skill": skill, "model": "m", "prompt": prompt}
         yield {
             "event": "tool_call",
@@ -286,6 +288,10 @@ def test_compare_live_stream_streams_steps_and_judge(
     assert {"tool_call", "tool_result", "assistant_text"} <= kinds
     result = next(d for e, d in parsed if e == "result")
     assert result["winner"] == "peak" and result["score_peak"] == 0.9
+    assert sorted(side_calls) == [
+        ("original", 0),
+        ("peak", int(data_loader.get_summary("docx")["best_round"])),
+    ]
 
 
 def test_norm_step_preserves_api_error_message() -> None:
@@ -476,6 +482,58 @@ def test_rubric_side_payload_computes_hybrid_rule_and_checks() -> None:
     assert p["skill_md_round"] == 5
     assert [c["name"] for c in p["rule_checks"]] == ["a", "b"]
     assert p["rule_checks"][0]["passed"] is True
+
+
+def test_load_compare_rubric_reads_stable_summary_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from app.services import compare as compare_module
+
+    rubric_dir = tmp_path / "rubrics"
+    rubric_dir.mkdir()
+    rubric_file = rubric_dir / "docx_create_create_stable123.json"
+    rubric_file.write_text(
+        json.dumps({"cache_key": "create_stable123", "criteria": []}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(compare_module, "_RUBRIC_CACHE_DIR", rubric_dir)
+    monkeypatch.setattr(
+        compare_module.data_loader,
+        "get_summary",
+        lambda skill: {"rubric_cache_keys": {"create": "create_stable123"}},
+    )
+    monkeypatch.setattr(
+        compare_module,
+        "_materialize_skill_version",
+        lambda *args, **kwargs: pytest.fail("live compare must not regenerate rubrics"),
+    )
+
+    rubric = compare_module._load_compare_rubric(
+        "docx", 5, "create", [{"id": "tc_a01"}]
+    )
+
+    assert rubric == {"cache_key": "create_stable123", "criteria": []}
+
+
+@requires_stable
+def test_load_compare_rubric_uses_committed_stable_rubric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import compare as compare_module
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    raw_cases = data_loader._get_test_cases("docx")
+    wf_tcs = [
+        t for t in raw_cases.values() if (t.get("workflow") or "create") == "create"
+    ]
+
+    rubric = compare_module._load_compare_rubric("docx", 5, "create", wf_tcs)
+
+    assert (
+        rubric["cache_key"]
+        == data_loader.get_summary("docx")["rubric_cache_keys"]["create"]
+    )
+    assert rubric.get("criteria")
 
 
 def test_parse_judge_json_strips_markdown_fences() -> None:

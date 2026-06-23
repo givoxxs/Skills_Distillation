@@ -516,10 +516,9 @@ def _norm_step(side: str, ev: dict) -> dict:
 # trigger a reload mid-run and wipe the in-memory run registry (run_id not found).
 _LIVE_RUNS_DIR = Path(__file__).resolve().parents[3] / "live_runs"
 
-# Cached compare rubrics (one teacher-generated rubric per skill+workflow). Kept
-# outside backend/ for the same reason as live_runs. First live run per
-# (skill, workflow) generates it; later runs hit the cache.
-_RUBRIC_CACHE_DIR = Path(__file__).resolve().parents[3] / ".rubric_cache"
+# Pipeline-generated stable rubrics. Live compare should use the same cached
+# yardstick as the stable distillation runs, not generate a demo-local rubric.
+_RUBRIC_CACHE_DIR = DISTILL_REPO_ROOT / "distillation_v2" / "rubrics"
 
 
 async def _run_student_side_streaming(
@@ -809,26 +808,22 @@ def _rubric_side_payload(
 
 
 def _load_compare_rubric(
-    skill: str, best_round: int, workflow: str, wf_tcs: list[dict]
+    skill: str, _best_round: int, workflow: str, wf_tcs: list[dict]
 ) -> dict:
-    """Load/generate the shared rubric for one skill+workflow (cached). Uses the
-    peak SKILL.md so both sides are judged by the same task-focused rubric."""
-    _ensure_distillation_imports()
-    from stages.rubric_gen import generate_rubric
-    from utils.llm_call import OPENROUTER_BASE_URL
+    """Load the stable pipeline rubric for one skill+workflow.
 
-    with tempfile.TemporaryDirectory(prefix="compare-rubric-") as tmp:
-        skill_dir = _materialize_skill_version(skill, best_round, Path(tmp))
-        return generate_rubric(
-            skill_name=skill,
-            skill_dir=skill_dir,
-            test_cases=wf_tcs,
-            workflow=workflow,
-            cache_dir=str(_RUBRIC_CACHE_DIR),
-            model=JUDGE_MODEL,
-            anthropic_api_key=os.getenv("OPENROUTER_API_KEY", ""),
-            base_url=OPENROUTER_BASE_URL,
-        )
+    Stable summary.json records the exact cache key produced during the
+    distillation run. Read that JSON directly instead of recomputing the key
+    from today's skill folder, which may have different helper scripts.
+    """
+    del _best_round, wf_tcs
+    key = data_loader.get_summary(skill).get("rubric_cache_keys", {}).get(workflow)
+    if not key:
+        raise RuntimeError(f"stable rubric key missing for {skill}/{workflow}")
+    rubric_file = _RUBRIC_CACHE_DIR / f"{skill}_{workflow}_{key}.json"
+    if not rubric_file.is_file():
+        raise RuntimeError(f"stable rubric file missing: {rubric_file}")
+    return json.loads(rubric_file.read_text(encoding="utf-8"))
 
 
 def _judge_live_rubric(

@@ -113,7 +113,10 @@ def _copy_outputs_to_results(output_dir: Path, log_dir: Path, run_label: str) ->
     dst = _RESULTS_DIR / run_label
     dst.mkdir(parents=True, exist_ok=True)
     for f in output_dir.iterdir():
-        shutil.copy2(f, dst / f.name)
+        if f.is_dir():
+            shutil.copytree(f, dst / f.name, dirs_exist_ok=True)
+        else:
+            shutil.copy2(f, dst / f.name)
     # Copy JSONL logs alongside output files
     logs_dst = dst / "logs"
     if log_dir.exists() and any(log_dir.iterdir()):
