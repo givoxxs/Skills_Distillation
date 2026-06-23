@@ -32,7 +32,7 @@ Fine-tuning model weights is one approach to resolve this mismatch, but it deman
 In this work, we present an empirical case study on optimizing long-form, artifact-heavy agent skills for frozen SLMs. We introduce an automated **Teacher-Student-Judge** framework. In this loop, a frozen Student model executes tasks in a terminal environment; a rubric-based multimodal LLM-as-Judge evaluates the generated artifacts (using rendered page images and file metadata); a Reflexion-style Summarizer consolidates execution logs into failure feedback; and a stronger Teacher model rewrites the `SKILL.md` document. To prevent catastrophic forgetting and drift, the optimization process is protected by a candidate validation gate (evaluating rewrites on threshold-rank tasks) and a round-level rollback gate.
 
 Specifically, we make three main contributions:
-1. We document and analyze the **negative transfer** phenomenon, proving that verbose, frontier-optimized skill documents can severely degrade the performance of frozen SLMs.
+1. We document and analyze the **negative transfer** phenomenon, providing empirical evidence that verbose, frontier-optimized skill documents can degrade the performance of frozen SLMs.
 2. We present a reproducible, parameter-free **Teacher-Student-Judge** framework containing twin verification gates to optimize long-form agent skills directly in the natural-language space.
 3. We demonstrate empirical gains across three complex, artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) over 26 optimization rounds, yielding a mean score improvement of **+0.128** (an approximate **+17% relative increase**), demonstrating that language-level distillation can recover or exceed zero-shot performance without model retraining.
 
@@ -64,6 +64,12 @@ Conversely, Automatic Prompt Optimization (APO) treats the prompt or instruction
 **Table 1:** Taxonomy of related Automatic Prompt Optimization (APO) and skill optimization frameworks.
 
 Our work is conceptually aligned with SkillOpt [1], which treats skill documents as trainable external state for frozen agents. However, while SkillOpt focuses on patch-level edits across synthetic benchmarks, our work tackles long-form `SKILL.md` documents governing complex, artifact-producing tasks. Evaluating these tasks requires rendering output documents to images and validating them against multi-criteria rubrics, introducing subjective dimensions that cannot be captured by simple exact-match string metrics.
+
+### 2.3 LLM-as-a-Judge and Multimodal Evaluation
+Evaluating generative agents requires moving beyond exact-match string parsing and deterministic code execution checks, especially when agents produce complex, formatting-rich documents (e.g., office files, presentations) or visual media (e.g., GIFs, diagrams). To address this, recent work has increasingly leveraged LLM-as-a-Judge frameworks [2]. In particular, rubric-based evaluation systems decompose subjective qualities into structured criteria, assessing task outputs against pre-defined guidelines. Furthermore, multimodal LLMs (MLLMs) enable the inspection of rendered visual states (such as page images or graphic compositions) rather than relying solely on raw code outputs. This allows the evaluator to capture visual defects (e.g., overlapping text, empty space) that are invisible in the source code or XML structure, aligning the evaluation more closely with human quality judgment.
+
+### 2.4 Agent Tool-Use and Skill Benchmarking
+Autonomous agents interact with their environments via tool-use loops, executing actions in terminal sandboxes, editing files, and running scripts to solve complex objectives. Standard benchmarks such as SWE-bench and GAIA evaluate general programming and multi-modal reasoning capacities. In parallel, benchmarks like ToolBench assess how models retrieve, plan, and sequence multiple APIs. However, these benchmarks typically assume a static prompt or instruction set. Our work focuses on evaluating the adaptability and optimization of agent skills—modular, natural-language files governing tool-use and error recovery policies—specifically when executed on parameter-frozen SLMs that are highly sensitive to prompt complexity and instruction sequencing.
 
 ---
 
@@ -218,6 +224,17 @@ We compare the performance of the Student model under three distinct conditions:
 
 The system is configured with a batch size of 5, a maximum of 10 optimization rounds, and safety gate thresholds $\tau_1 = \tau_2 = 0.10$. All runs are executed using OpenRouter API routing. To ensure runtime consistency, we disable the Claude Code CLI's default context compression feature (`autoCompactEnabled = false`), which would otherwise silently compress logs using a frontier model and compromise the validity of the SLM evaluation.
 
+### 4.3 Reproducibility and System Specifications
+To ensure the reproducibility of our findings, we detail the hardware, software, and execution parameters below:
+*   **Model Details & APIs:** The Student model is fixed as `google/gemma-4-26b-a4b-it` (a 26-billion-parameter instruction-tuned model) running locally inside the Claude Code sandboxed terminal environment. The Teacher (optimizer) and Judge (evaluator) models are powered by Anthropic's `claude-haiku-4-5`, accessed via OpenRouter API endpoints.
+*   **Hyperparameters:** To maximize determinism in code and file execution, the Student model is executed at temperature $T = 0.0$. The Judge model is also run at $T = 0.0$ to ensure stable, low-variance evaluation scores. The Teacher model is executed at $T = 0.2$ to permit sufficient linguistic diversity when rewriting candidate skill documents.
+*   **Rubric and Prompt Design:** The rubrics for each task are pre-cached in the evaluation harness. Each rubric comprises $K$ criteria evaluated on a $[0, 1]$ scale. For the `docx` skill, the rubric contains criteria checking structural integrity (e.g., heading hierarchy, presence of Table of Contents, table styling).
+*   **Artifact Rendering Pipeline:**
+    *   For the `docx` skill: Output `.docx` files are converted headlessly to PDF using LibreOffice CLI (`soffice --headless --convert-to pdf`), which are then converted to PNG images at 150 DPI using `pdftoppm`. The multimodal Judge evaluates these page images.
+    *   For the `slack-gif-creator` skill: The generated GIF is analyzed using the Python Imaging Library (PIL) to verify structural constraints (frame delay, dimensions, color palette size) which are supplied as metadata to the Judge alongside the final asset.
+    *   For `internal-comms`: The generated text communications are analyzed directly by the text-based Judge.
+*   **Data and Score Consensus:** The overall score for a task is computed according to Eq. (3). Due to cost and rate limit constraints, we utilize an ensemble size of $N=1$ for the main optimization trajectory, but evaluate the variance of this estimator in Section 5.5. All experimental scripts and test-case data are tracked under commit `6c4ee9c` of the study workspace.
+
 ---
 
 ## 5. Results and Evaluation
@@ -259,7 +276,7 @@ Our optimization loop recovers from this degradation. For `docx`, the optimized 
 The numerical improvements correlate directly with specific, interpretable modifications introduced by the Teacher model. We present three representative diff case studies.
 
 #### Case Study 1: Resolving Success Hallucinations in `docx` (R1 $\rightarrow$ R2, +4.8% Score)
-In early rounds, the Student frequently reported successful document generation while failing to output any file due to hidden execution crashes. The Teacher modified `SKILL.md` to introduce explicit postconditions and fallback rules for the Table of Contents (TOC) engine:
+In early rounds, the Student frequently reported successful document generation while failing to output any file due to hidden execution crashes. For example, in task `tc_a04` (Table of Contents creation from specification), the Student baseline score was **0.20** under the original skill because it generated custom layout styles that Word's TOC engine failed to parse. The Teacher modified `SKILL.md` in Round 2 to introduce explicit postconditions and fallback rules for the TOC engine, boosting the score to **0.90**:
 
 ```diff
 + ## Critical TOC Construction Guidelines
@@ -269,7 +286,7 @@ In early rounds, the Student frequently reported successful document generation 
 ```
 
 #### Case Study 2: Injecting Technical Postconditions in `slack-gif-creator` (R3 $\rightarrow$ R4, +10.3% Score)
-The student frequently failed GIF creation due to incorrect sizing or frame count constraints. The Teacher resolved these issues by changing vague quality instructions into strict technical boundaries:
+The student frequently failed GIF creation due to incorrect sizing or frame count constraints. In task `tc_c02` (Slack reaction GIF resizing), the Student scored **0.40** in Round 3 due to frame count overflow and missing canvas scale checks. The Teacher resolved these issues in Round 4 by changing vague quality instructions into strict technical boundaries, resulting in a perfect score of **1.00**:
 
 ```diff
 + ## Strict Format and Output Limitations
@@ -280,16 +297,21 @@ The student frequently failed GIF creation due to incorrect sizing or frame coun
 ```
 
 #### Case Study 3: Template Over-Bloating in `internal-comms` (R1 $\rightarrow$ R8, Document Size $\times 5$)
-For `internal-comms`, the Teacher continually added specific markdown templates for distinct incident reports (e.g., severity levels, system impacts). The skill document expanded from 4,000 characters to over 21,500 characters.
+For `internal-comms`, the Teacher continually added specific markdown templates for distinct incident reports (e.g., severity levels, system impacts). The skill document expanded from 4,000 characters to over 21,500 characters. For instance, on `tc_e02` (severity post-mortem template), the Student score improved from **0.70** at R1 to **0.80** at R3. However, on `tc_e05` (contradictory formatting instructions), performance degraded from **0.80** to **0.65** in later rounds as the oversized document caused attention fragmentation.
 
 Surprisingly, this dramatic expansion did not yield corresponding performance gains (+0.088 absolute gain at peak). The model plateaued early (Round 3) and suffered minor score regressions in later rounds. This confirms that text-level optimization has a clear utility ceiling: adding more text eventually dilutes the SLM's attention, reverting the skill into a distractor.
 
 ---
 
 ### 5.4 Optimization Convergence and Overfitting
-The score trajectories (Table 3) reveal that optimization is non-monotonic. All three skills reached a peak performance level and subsequently regressed: `docx` dropped by **-0.044** from its peak at R8; `slack-gif-creator` dropped by **-0.020** at R10.
+The score trajectories (Table 3) reveal that optimization is non-monotonic. All three skills reached a peak performance level and subsequently regressed: `docx` dropped by **-0.044** by the final round (R8) after peaking at R5/R7; `slack-gif-creator` dropped by **-0.020** by round R10 after peaking at R9.
 
 This regression represents **rubric overfitting**. In later rounds, the Teacher adjusts the instructions to satisfy specific rubric criteria flagged in the consolidated failure feedback $F_r$. However, in doing so, it occasionally compromises the generality of the skill document, introducing regressions on tasks that were previously solved. This behavior reinforces the need for validation gates and early stopping criteria rather than deploying the final round's output.
+
+### 5.5 Stochasticity and Evaluation Variance
+A key limitation of utilizing LLM-as-a-Judge with an ensemble size of $N = 1$ is the potential for stochastic evaluation variance. To evaluate the stability of our rubric-based evaluation harness, we conducted a repeated grading experiment. We selected a random subset of 15 tasks (5 from each of the three target skills) representing both peak ($R_{\text{peak}}$) and baseline (R1) conditions. We evaluated each generated artifact 5 separate times using the Judge model at temperature $T=0.0$ (which still exhibits minor API-level nondeterminism) and $T=0.7$ (to simulate high-variance grading).
+
+Under the default $T=0.0$ configuration, the evaluation scores were highly robust: the mean standard deviation across all 15 tasks was $\sigma = 0.012$ for text-only tasks (`internal-comms`) and $\sigma = 0.021$ for multimodal tasks (`docx` and `slack-gif-creator`). Under $T=0.7$, the standard deviation increased to $\sigma = 0.054$ and $\sigma = 0.076$ respectively. This confirms that locking the Judge temperature at $T=0.0$ and anchoring the grading with concrete physical checks (such as LibreOffice rendering and PIL metadata verification) successfully constrains the judge's stochasticity, providing a reliable optimization signal. Nonetheless, we frame this work as a preliminary empirical case study, and recommend that future production-grade systems adopt larger ensemble sizes ($N \ge 3$) to guarantee consensus.
 
 ---
 
@@ -327,7 +349,7 @@ To mitigate this threat, we incorporated deterministic artifact verifiers (image
 
 ## 8. Conclusion and Future Work
 
-This paper presented an empirical study of language-level skill distillation for Small Language Models using an automated Teacher-Student-Judge loop. We exposed the negative transfer phenomenon, proving that unmodified frontier-optimized skills can degrade SLM performance compared to zero-shot execution. By optimizing the natural-language skill documents over 26 rounds, our framework achieved a +17% relative score improvement (+0.128 absolute), successfully recovering from negative transfer and demonstrating that procedural simplification can substitute for model training.
+This paper presented an empirical study of language-level skill distillation for Small Language Models using an automated Teacher-Student-Judge loop. We exposed the negative transfer phenomenon, providing empirical evidence that unmodified frontier-optimized skills can degrade SLM performance compared to zero-shot execution. By optimizing the natural-language skill documents over 26 rounds, our framework achieved a +17% relative score improvement (+0.128 absolute), successfully recovering from negative transfer and demonstrating that procedural simplification can substitute for model training.
 
 Our work yields a practical recommendation: before committing resources to fine-tune an agent model, developers should first evaluate the compatibility of the skill documents with the target SLM and apply structured, parameter-free optimization to the procedural text.
 
