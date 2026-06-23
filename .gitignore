@@ -124,6 +124,17 @@ entities.json
 # Local notes (not for commit)
 docs/notes/
 docs/thesis/
+!docs/thesis/
+docs/thesis/*
+!docs/thesis/paper/
+docs/thesis/paper/*
+!docs/thesis/paper/paper_draft.md
+!docs/thesis/paper/generate_paper_figures.py
+!docs/thesis/paper/figures/
+docs/thesis/paper/figures/*
+!docs/thesis/paper/figures/fig1_system_overview.png
+!docs/thesis/paper/figures/fig2_baseline_results.png
+!docs/thesis/paper/figures/fig3_learning_curves.png
 docs/setup/
 *.docx
 DATN_Skill_Distillation.html

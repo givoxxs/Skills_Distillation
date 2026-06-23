@@ -13,15 +13,15 @@ Email: ctruongtan31070901@gmail.com
 
 ## Abstract
 
-Agent skills package complex procedural knowledge—such as tool usage guidelines, workflow constraints, and error recovery policies—into reusable natural-language documents (e.g., `SKILL.md`). While these documents are typically authored and validated using frontier large language models, their portability to Small Language Models (SLMs) remains an open challenge. In this paper, we investigate the portability of frontier-authored agent skills to frozen SLMs. We demonstrate a critical *negative transfer* phenomenon, where executing frontier-optimized skills on an SLM yields performance worse than using no skill at all due to instruction-bloat and cognitive overload. To address this, we propose a parameter-free, language-level distillation framework using a closed-loop **Teacher-Student-Judge** architecture.
+Agent skills package complex procedural knowledge—such as tool usage guidelines, workflow constraints, and error recovery policies—into reusable natural-language documents (e.g., `SKILL.md`). While these documents are typically authored and validated using frontier large language models, their portability to Small Language Models (SLMs) remains an open challenge. In this paper, we investigate the portability of frontier-authored agent skills to frozen SLMs. We observe a critical *negative transfer* phenomenon in two of the three studied skills, where executing frontier-optimized skills on an SLM yields performance worse than using no skill at all due to instruction bloat and cognitive overload. To address this, we propose a parameter-free, language-level distillation framework using a closed-loop **Teacher-Student-Judge** architecture.
 
-Our framework optimizes long skill documents through iterative, natural-language rewriting driven by consolidated failure feedback, guarded by candidate validation and round-level rollback gates. We evaluate our method on three artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) using a suite of 76 test cases. Across 26 optimization rounds, the best-performing skill versions consistently recover from negative transfer, achieving a mean score improvement of **+0.128** on a 0–1 scale over the original skill baseline—representing a **~17% relative improvement**. Our results suggest that optimizing natural-language procedural instructions is a highly effective, low-cost intervention before considering gradient-based model fine-tuning.
+Our framework optimizes long skill documents through iterative, natural-language rewriting driven by consolidated failure feedback, guarded by candidate validation and round-level rollback gates. We evaluate our method on three artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) using a suite of 76 test cases. Across 26 optimization rounds, the best-performing skill versions improve over the original skill baseline in all three domains and recover from negative transfer where it appears, achieving a mean score improvement of **+0.128** on a 0–1 scale—representing a **~17% relative improvement**. Our results suggest that optimizing natural-language procedural instructions is a practical, low-cost intervention before considering gradient-based model fine-tuning.
 
 ---
 
 ## 1. Introduction
 
-Autonomous language-model agents increasingly rely on externalized procedural knowledge to execute multi-step operations. Rather than forcing a model to infer complex tool-use patterns or output formatting requirements from a single task prompt, modern agent architectures inject modular "skills." A prominent realization of this design is Anthropic's Agent Skills, which package instructions, scripts, templates, and execution schemas into a structured `SKILL.md` file. This modularity allows skills to be dynamically loaded under a progressive disclosure model, conserving context window space and standardizing workflows across diverse execution environments (e.g., Claude Code, Cursor, and Gemini CLI).
+Autonomous language-model agents increasingly rely on externalized procedural knowledge to execute multi-step operations [9]. Rather than forcing a model to infer complex tool-use patterns or output formatting requirements from a single task prompt, modern agent architectures inject modular "skills." A prominent realization of this design is Anthropic's Agent Skills, which package instructions, scripts, templates, and execution schemas into a structured `SKILL.md` file. Recent skill-oriented benchmarks further highlight the need to evaluate these reusable procedural artifacts directly rather than treating them as incidental prompt context [10]. This modularity allows skills to be dynamically loaded under a progressive disclosure model, conserving context window space and standardizing workflows across diverse execution environments (e.g., Claude Code, Cursor, and Gemini CLI).
 
 However, a fundamental portability bottleneck arises: skill documents authored and refined on frontier models (e.g., Claude 3.5 Sonnet, GPT-4o) do not transfer seamlessly to Small Language Models (SLMs, defined here as models containing fewer than 30 billion parameters). Small models exhibit high sensitivity to instruction formatting, step-by-step sequencing, and procedural ambiguity. When forced to consume frontier-optimized, highly verbose skill documents, SLMs frequently suffer from cognitive overload, manifesting as skipped verification steps, malformed tool calls, or "success hallucinations" (wherein the agent reports successful task execution despite failing to produce the required output artifact).
 
@@ -32,16 +32,16 @@ Fine-tuning model weights is one approach to resolve this mismatch, but it deman
 In this work, we present an empirical case study on optimizing long-form, artifact-heavy agent skills for frozen SLMs. We introduce an automated **Teacher-Student-Judge** framework. In this loop, a frozen Student model executes tasks in a terminal environment; a rubric-based multimodal LLM-as-Judge evaluates the generated artifacts (using rendered page images and file metadata); a Reflexion-style Summarizer consolidates execution logs into failure feedback; and a stronger Teacher model rewrites the `SKILL.md` document. To prevent catastrophic forgetting and drift, the optimization process is protected by a candidate validation gate (evaluating rewrites on threshold-rank tasks) and a round-level rollback gate.
 
 Specifically, we make three main contributions:
-1. We document and analyze the **negative transfer** phenomenon, providing empirical evidence that verbose, frontier-optimized skill documents can degrade the performance of frozen SLMs.
+1. We document and analyze **negative transfer** in two artifact-oriented skills, providing empirical evidence that verbose, frontier-optimized skill documents can degrade the performance of frozen SLMs.
 2. We present a reproducible, parameter-free **Teacher-Student-Judge** framework containing twin verification gates to optimize long-form agent skills directly in the natural-language space.
-3. We demonstrate empirical gains across three complex, artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) over 26 optimization rounds, yielding a mean score improvement of **+0.128** (an approximate **+17% relative increase**), demonstrating that language-level distillation can recover or exceed zero-shot performance without model retraining.
+3. We demonstrate empirical gains across three complex, artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) over 26 optimization rounds, yielding a mean score improvement of **+0.128** (an approximate **+17% relative increase**) and showing that language-level distillation can recover or exceed zero-shot performance in this empirical setup without model retraining.
 
 ---
 
 ## 2. Background and Related Work
 
 ### 2.1 Agent Skills and Procedural Knowledge
-Traditional prompt engineering focuses on task-specific instructions passed within a single conversational context. In contrast, agent skills represent reusable procedural blocks designed to be invoked dynamically. Under the progressive disclosure model pioneered by Anthropic, a skill is structured hierarchically across three tiers:
+Traditional prompt engineering focuses on task-specific instructions passed within a single conversational context, a setting commonly studied through instruction-following evaluations [7]. In contrast, agent skills represent reusable procedural blocks designed to be invoked dynamically. Under the progressive disclosure model pioneered by Anthropic, a skill is structured hierarchically across three tiers:
 1. **L1 (Metadata):** Read at startup (~100 tokens), containing the YAML frontmatter (`name` and `description`). The description acts as the retrieval prompt used by the router to decide when to activate the skill.
 2. **L2 (Body):** The main body of `SKILL.md` (typically $<5,000$ tokens), loaded into the context window only when the skill is retrieved.
 3. **L3 (Resources):** Executable helper scripts and static assets (e.g., JSON schemas, template documents) called by the agent dynamically during execution, preventing context bloat.
@@ -69,7 +69,7 @@ Our work is conceptually aligned with SkillOpt [1], which treats skill documents
 Evaluating generative agents requires moving beyond exact-match string parsing and deterministic code execution checks, especially when agents produce complex, formatting-rich documents (e.g., office files, presentations) or visual media (e.g., GIFs, diagrams). To address this, recent work has increasingly leveraged LLM-as-a-Judge frameworks [2]. In particular, rubric-based evaluation systems decompose subjective qualities into structured criteria, assessing task outputs against pre-defined guidelines. Furthermore, multimodal LLMs (MLLMs) enable the inspection of rendered visual states (such as page images or graphic compositions) rather than relying solely on raw code outputs. This allows the evaluator to capture visual defects (e.g., overlapping text, empty space) that are invisible in the source code or XML structure, aligning the evaluation more closely with human quality judgment.
 
 ### 2.4 Agent Tool-Use and Skill Benchmarking
-Autonomous agents interact with their environments via tool-use loops, executing actions in terminal sandboxes, editing files, and running scripts to solve complex objectives. Standard benchmarks such as SWE-bench and GAIA evaluate general programming and multi-modal reasoning capacities. In parallel, benchmarks like ToolBench assess how models retrieve, plan, and sequence multiple APIs. However, these benchmarks typically assume a static prompt or instruction set. Our work focuses on evaluating the adaptability and optimization of agent skills—modular, natural-language files governing tool-use and error recovery policies—specifically when executed on parameter-frozen SLMs that are highly sensitive to prompt complexity and instruction sequencing.
+Autonomous agents interact with their environments via tool-use loops, executing actions in terminal sandboxes, editing files, and running scripts to solve complex objectives. Standard benchmarks such as SWE-bench and GAIA evaluate general programming and multi-modal reasoning capacities [11, 12]. In parallel, benchmarks like ToolBench and function-calling leaderboards assess how models retrieve, plan, and sequence multiple APIs [8, 13]. However, these benchmarks typically assume a static prompt or instruction set. Our work focuses on evaluating the adaptability and optimization of agent skills—modular, natural-language files governing tool-use and error recovery policies—specifically when executed on parameter-frozen SLMs that are highly sensitive to prompt complexity and instruction sequencing.
 
 ---
 
@@ -95,7 +95,7 @@ The optimization framework consists of three distinct LLM agents operating in a 
 
 ![Figure 1. Overview of the artifact-aware Teacher-Student-Judge optimization loop. The Student model stays frozen; only the external skill document is rewritten from round-level failure feedback.](figures/fig1_system_overview.png)
 
-1.  **Student (Execution):** The target agent model being optimized. The Student model receives the current skill $M_r$, reads the task prompt $t$, and executes tool calls (file edits, command executions, verification checks) within a sandboxed terminal environment. In our experiments, we fix the Student as `google/gemma-4-26b-a4b-it` running inside the Claude Code CLI.
+1.  **Student (Execution):** The target agent model being optimized. The Student model receives the current skill $M_r$, reads the task prompt $t$, and executes tool calls (file edits, command executions, verification checks) within a sandboxed terminal environment. In our experiments, we fix the Student as `google/gemma-4-26b-a4b-it`, orchestrated by the Claude Code CLI while model inference is served through OpenRouter.
 2.  **Judge (Evaluation):** A multimodal evaluator that scores the Student's output. To evaluate artifact-producing tasks objectively, the Judge does not merely look at the final text output. For the `docx` skill, the Judge inspects rendered page images of the generated Word document (compiled via LibreOffice and `pdf2image`). For the `slack-gif-creator` skill, the Judge analyzes frame metadata and structural constraints of the output GIF.
     The Judge scores each task according to a stable, pre-cached workflow-specific rubric. For a rubric containing $K$ criteria, the overall score $o$ is computed as the weighted sum:
     $$\tag{3} o = \sum_{i=1}^K w_i \cdot s_i \quad \text{subject to} \quad \sum_{i=1}^K w_i = 1$$
@@ -128,6 +128,8 @@ If the overall score drops significantly compared to the previous round, we trig
 $$\tag{7} M_{r+1} = \begin{cases} M_{\text{best}} & \text{if } S_r - S_{r-1} < -\tau_2 \\ \text{Teacher}(M_r, F_r) & \text{otherwise} \end{cases}$$
 
 where $\tau_2 = 0.10$ is the rollback threshold. When a rollback is triggered, the Teacher call for that round is skipped, ensuring the optimization trajectory resumes from a stable, high-performing checkpoint.
+
+We treat these gates as engineering safeguards rather than independent scientific claims. Isolating the individual contribution of candidate validation and round-level rollback would require an explicit ablation study, which we leave to future work.
 
 ---
 
@@ -226,7 +228,7 @@ The system is configured with a batch size of 5, a maximum of 10 optimization ro
 
 ### 4.3 Reproducibility and System Specifications
 To ensure the reproducibility of our findings, we detail the hardware, software, and execution parameters below:
-*   **Model Details & APIs:** The Student model is fixed as `google/gemma-4-26b-a4b-it` (a 26-billion-parameter instruction-tuned model) running locally inside the Claude Code sandboxed terminal environment. The Teacher (optimizer) and Judge (evaluator) models are powered by Anthropic's `claude-haiku-4-5`, accessed via OpenRouter API endpoints.
+*   **Model Details & APIs:** The Student model is fixed as `google/gemma-4-26b-a4b-it` (a 26-billion-parameter instruction-tuned model), orchestrated by Claude Code CLI in a sandboxed terminal environment, with inference served through OpenRouter API endpoints. The Teacher (optimizer) and Judge (evaluator) models are powered by Anthropic's `claude-haiku-4-5`, also accessed via OpenRouter API endpoints.
 *   **Hyperparameters:** To maximize determinism in code and file execution, the Student model is executed at temperature $T = 0.0$. The Judge model is also run at $T = 0.0$ to ensure stable, low-variance evaluation scores. The Teacher model is executed at $T = 0.2$ to permit sufficient linguistic diversity when rewriting candidate skill documents.
 *   **Rubric and Prompt Design:** The rubrics for each task are pre-cached in the evaluation harness. Each rubric comprises $K$ criteria evaluated on a $[0, 1]$ scale. For the `docx` skill, the rubric contains criteria checking structural integrity (e.g., heading hierarchy, presence of Table of Contents, table styling).
 *   **Artifact Rendering Pipeline:**
@@ -253,16 +255,16 @@ Across all three skills, our language-level distillation loop yields significant
 
 The average score across the three domains increases from **0.748** at R1 to **0.877** at peak, corresponding to a relative gain of **~17%**. The largest improvement is observed in the technically constrained `slack-gif-creator` skill (+23.6% relative gain). For `docx`, the peak score of **0.921** is achieved at both Round 5 and Round 7, demonstrating that the optimized state is highly stable and reproducible.
 
-The step-by-step scoring trajectories for all rounds are visualized in Figure 2, while the comparative bar chart across all baseline conditions is shown in Figure 3.
+The comparative bar chart across all baseline conditions is shown in Figure 2, while the round-level scoring trajectories are visualized in Figure 3.
 
-![Figure 2. Performance trajectories over optimization rounds for docx and slack-gif-creator. The stars highlight the peak performance rounds.](figures/fig3_learning_curves.png)
+![Figure 2. Comparison of No-Skill, original skill (R1), and optimized skill (R_peak) scores across the three studied skills.](figures/fig2_baseline_results.png)
 
-![Figure 3. Comparison of No-Skill, original skill (R1), and optimized skill (R_peak) scores across the three studied skills.](figures/fig2_baseline_results.png)
+![Figure 3. Performance trajectories over optimization rounds for docx, internal-comms, and slack-gif-creator. The stars highlight the peak performance rounds.](figures/fig3_learning_curves.png)
 
 ---
 
 ### 5.2 Deconstructing Negative Transfer
-The no-skill baseline results in Table 3 reveal a critical finding: **original frontier-optimized skills can harm SLM performance.**
+The no-skill baseline results in Table 3 reveal a critical finding: **original frontier-optimized skills can harm SLM performance in some domains.**
 
 On the `docx` skill, the Student model performs substantially better *without* the skill (0.891) than with the original R1 skill (0.793). A similar behavior occurs in `internal-comms` (0.814 zero-shot vs. 0.735 at R1).
 
@@ -311,7 +313,14 @@ This regression represents **rubric overfitting**. In later rounds, the Teacher 
 ### 5.5 Stochasticity and Evaluation Variance
 A key limitation of utilizing LLM-as-a-Judge with an ensemble size of $N = 1$ is the potential for stochastic evaluation variance. To evaluate the stability of our rubric-based evaluation harness, we conducted a repeated grading experiment. We selected a random subset of 15 tasks (5 from each of the three target skills) representing both peak ($R_{\text{peak}}$) and baseline (R1) conditions. We evaluated each generated artifact 5 separate times using the Judge model at temperature $T=0.0$ (which still exhibits minor API-level nondeterminism) and $T=0.7$ (to simulate high-variance grading).
 
-Under the default $T=0.0$ configuration, the evaluation scores were highly robust: the mean standard deviation across all 15 tasks was $\sigma = 0.012$ for text-only tasks (`internal-comms`) and $\sigma = 0.021$ for multimodal tasks (`docx` and `slack-gif-creator`). Under $T=0.7$, the standard deviation increased to $\sigma = 0.054$ and $\sigma = 0.076$ respectively. This confirms that locking the Judge temperature at $T=0.0$ and anchoring the grading with concrete physical checks (such as LibreOffice rendering and PIL metadata verification) successfully constrains the judge's stochasticity, providing a reliable optimization signal. Nonetheless, we frame this work as a preliminary empirical case study, and recommend that future production-grade systems adopt larger ensemble sizes ($N \ge 3$) to guarantee consensus.
+Under the default $T=0.0$ configuration, the evaluation scores were highly robust: the mean standard deviation across all 15 tasks was $\sigma = 0.012$ for text-only tasks (`internal-comms`) and $\sigma = 0.021$ for multimodal tasks (`docx` and `slack-gif-creator`). Under $T=0.7$, the standard deviation increased to $\sigma = 0.054$ and $\sigma = 0.076$ respectively.
+
+| Judge setting | Text-only tasks std. dev. | Multimodal tasks std. dev. | Interpretation |
+| :--- | :---: | :---: | :--- |
+| $T=0.0$ | 0.012 | 0.021 | Low-variance default used in the main trajectory |
+| $T=0.7$ | 0.054 | 0.076 | Stress setting showing higher grading variance |
+
+This confirms that locking the Judge temperature at $T=0.0$ and anchoring the grading with concrete physical checks (such as LibreOffice rendering and PIL metadata verification) constrains the judge's stochasticity, providing a more reliable optimization signal. Nonetheless, the main optimization trajectory still uses an ensemble size of $N=1$, so we frame this work as a preliminary empirical case study and recommend that future production-grade systems adopt larger ensemble sizes ($N \ge 3$) to guarantee consensus.
 
 ---
 
@@ -342,14 +351,15 @@ To mitigate this threat, we incorporated deterministic artifact verifiers (image
 ## 7. Threats to Validity
 
 1.  **No Independent Held-Out Test Split:** Due to the limited size of the available test suites (76 cases total), we optimized and evaluated on the same task pool. Although the twin safety gates mitigate overfitting, the peak scores reported here likely contain some training-set optimistic bias. Future work must validate these optimized skills on held-out test splits.
-2.  **Judge Stochasticity:** The Judge was executed at a non-zero temperature with an ensemble size of $N = 1$. Re-running the evaluation on identical output artifacts revealed minor score fluctuations (e.g., a variance of $\pm 0.03$ on the `slack-gif-creator` baseline). Zero-temperature judging or larger ensemble sizes ($N \ge 3$) are required for strict mathematical consensus.
+2.  **Judge Stochasticity:** The main Judge is executed at $T=0.0$, but the main optimization trajectory still uses an ensemble size of $N = 1$. Re-running the evaluation on identical output artifacts revealed small residual score fluctuations, likely due to API-level nondeterminism and multimodal grading sensitivity. Larger ensemble sizes ($N \ge 3$) are required for strict mathematical consensus.
 3.  **Single Student Model:** Our findings are based on `gemma-4-26b-a4b-it`. We cannot guarantee that a skill document optimized for Gemma will transfer effectively to other SLMs (e.g., Llama-3-8B or Qwen-2.5-7B). Cross-model portability testing is an important future research direction.
+4.  **No Gate Ablation:** Candidate validation and round-level rollback are included as safety mechanisms, but we do not separately ablate them. Therefore, the reported gains should be attributed to the full optimization system rather than to either gate in isolation.
 
 ---
 
 ## 8. Conclusion and Future Work
 
-This paper presented an empirical study of language-level skill distillation for Small Language Models using an automated Teacher-Student-Judge loop. We exposed the negative transfer phenomenon, providing empirical evidence that unmodified frontier-optimized skills can degrade SLM performance compared to zero-shot execution. By optimizing the natural-language skill documents over 26 rounds, our framework achieved a +17% relative score improvement (+0.128 absolute), successfully recovering from negative transfer and demonstrating that procedural simplification can substitute for model training.
+This paper presented an empirical study of language-level skill distillation for Small Language Models using an automated Teacher-Student-Judge loop. We exposed negative transfer in two studied skills, providing empirical evidence that unmodified frontier-optimized skills can degrade SLM performance compared to zero-shot execution. By optimizing the natural-language skill documents over 26 rounds, our framework achieved a +17% relative score improvement (+0.128 absolute), recovering from the observed negative transfer in `docx` and `internal-comms` and improving all three original-skill baselines. These results suggest that procedural simplification can be a practical first intervention before model training.
 
 Our work yields a practical recommendation: before committing resources to fine-tune an agent model, developers should first evaluate the compatibility of the skill documents with the target SLM and apply structured, parameter-free optimization to the procedural text.
 
@@ -381,3 +391,9 @@ Future research will expand the scope of this work by:
 [9] Lilian Weng. 2023. *LLM Powered Autonomous Agents*. Lil'Log. https://lilianweng.github.io/posts/2023-06-23-agent/
 
 [10] SkillsBench authors. 2026. *SkillsBench: Benchmarking How Well Agent Skills Work Across Diverse Tasks*. arXiv:2602.12670.
+
+[11] Carlos E. Jimenez, John Yang, Alexander Wettig, Shunyu Yao, Kexin Pei, Ofir Press, and Karthik Narasimhan. 2024. *SWE-bench: Can Language Models Resolve Real-World GitHub Issues?* ICLR. arXiv:2310.06770.
+
+[12] Grégoire Mialon et al. 2023. *GAIA: a Benchmark for General AI Assistants*. arXiv:2311.12983.
+
+[13] Yujia Qin et al. 2023. *ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs*. arXiv:2307.16789.
