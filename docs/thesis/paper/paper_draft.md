@@ -36,8 +36,6 @@ Specifically, we make three main contributions:
 2. We present a reproducible, parameter-free **Teacher-Student-Judge** framework containing twin verification gates to optimize long-form agent skills directly in the natural-language space.
 3. We demonstrate empirical gains across three complex, artifact-oriented skills (`docx`, `internal-comms`, and `slack-gif-creator`) over 26 optimization rounds, yielding a mean score improvement of **+0.128** (an approximate **+17% relative increase**), demonstrating that language-level distillation can recover or exceed zero-shot performance without model retraining.
 
-![Figure 1. Overview of the artifact-aware Teacher-Student-Judge optimization loop. The Student model stays frozen; only the external skill document is rewritten from round-level failure feedback.](figures/fig1_system_overview.png)
-
 ---
 
 ## 2. Background and Related Work
@@ -87,33 +85,9 @@ where $F_r$ represents a consolidated failure feedback report compiled by a log 
 ---
 
 ### 3.2 Teacher-Student-Judge Architecture
-The optimization framework consists of three distinct LLM agents operating in a closed loop:
+The optimization framework consists of three distinct LLM agents operating in a closed loop (Figure 1):
 
-```mermaid
-graph TD
-    subgraph "Execution Loop (Batch size B)"
-        Student["Student Agent: Gemma-4-26B"] -->|Produces Artifacts & Log| Env["Execution Sandbox"]
-        Env -->|Artifacts & Tool Logs| Judge["LLM-as-Judge: Haiku 4.5"]
-    end
-
-    subgraph "Optimization Loop (Round r)"
-        Judge -->|Rubric Scores| Summarizer["Reflexion-style Summarizer"]
-        Summarizer -->|Consolidated Failure Feedback F_r| Teacher["Teacher Agent: Haiku 4.5"]
-        Teacher -->|Candidate Skill M_candidate| Gate1{"Gate 1: Validation"}
-
-        Gate1 -->|Pass| Gate2{"Gate 2: Rollback"}
-        Gate1 -->|Fail| Rollback1["Reject & Keep M_r"]
-
-        Gate2 -->|Score Gain| Commit["Commit M_r+1"]
-        Gate2 -->|Score Regress| Rollback2["Rollback to M_best"]
-    end
-
-    Commit -->|Updated SKILL.md| Student
-    Rollback1 -->|Keep current SKILL.md| Student
-    Rollback2 -->|Restore M_best| Student
-```
-
-**Figure 1:** Detailed system architecture of the Teacher-Student-Judge optimization loop, demonstrating the interaction between the execution sandbox, the rubric-based evaluator, the log summarizer, and the twin safety gates.
+![Figure 1. Overview of the artifact-aware Teacher-Student-Judge optimization loop. The Student model stays frozen; only the external skill document is rewritten from round-level failure feedback.](figures/fig1_system_overview.png)
 
 1.  **Student (Execution):** The target agent model being optimized. The Student model receives the current skill $M_r$, reads the task prompt $t$, and executes tool calls (file edits, command executions, verification checks) within a sandboxed terminal environment. In our experiments, we fix the Student as `google/gemma-4-26b-a4b-it` running inside the Claude Code CLI.
 2.  **Judge (Evaluation):** A multimodal evaluator that scores the Student's output. To evaluate artifact-producing tasks objectively, the Judge does not merely look at the final text output. For the `docx` skill, the Judge inspects rendered page images of the generated Word document (compiled via LibreOffice and `pdf2image`). For the `slack-gif-creator` skill, the Judge analyzes frame metadata and structural constraints of the output GIF.
@@ -262,26 +236,11 @@ Across all three skills, our language-level distillation loop yields significant
 
 The average score across the three domains increases from **0.748** at R1 to **0.877** at peak, corresponding to a relative gain of **~17%**. The largest improvement is observed in the technically constrained `slack-gif-creator` skill (+23.6% relative gain). For `docx`, the peak score of **0.921** is achieved at both Round 5 and Round 7, demonstrating that the optimized state is highly stable and reproducible.
 
-The step-by-step scoring trajectories for all rounds are visualized in Figure 2.
+The step-by-step scoring trajectories for all rounds are visualized in Figure 2, while the comparative bar chart across all baseline conditions is shown in Figure 3.
 
-```
-Score (0-1)
-  1.00 |
-  0.95 |                               * [docx Peak: 0.921]
-  0.90 |                         *---*       *
-  0.85 |             *---*---*               \---* [docx Final: 0.877]
-  0.80 |   * [R1: 0.793]                          \
-  0.75 |   |                 * [slack Peak: 0.886] \
-  0.70 |   *                 |               *---*  * [slack Final: 0.865]
-  0.65 |   \                 \       *-------/
-  0.60 |    \---*             \-----/
-  0.55 |         \---*---*
-  0.50 |__________________________________________________
-           R1   R2   R3   R4   R5   R6   R7   R8   R9  R10
-```
-**Figure 2:** Performance trajectories over optimization rounds for `docx` (solid line) and `slack-gif-creator` (dashed line).
+![Figure 2. Performance trajectories over optimization rounds for docx and slack-gif-creator. The stars highlight the peak performance rounds.](figures/fig3_learning_curves.png)
 
-![Figure 2. Comparison of No-Skill, original skill (R1), and optimized skill (R_peak) scores across the three studied skills.](figures/fig2_baseline_results.png)
+![Figure 3. Comparison of No-Skill, original skill (R1), and optimized skill (R_peak) scores across the three studied skills.](figures/fig2_baseline_results.png)
 
 ---
 
